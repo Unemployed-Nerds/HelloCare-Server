@@ -66,6 +66,14 @@ router.post('/process', authenticateToken, [
     // 1. Process payment through payment gateway (Stripe, PayPal, etc.)
     // 2. Store transaction in database
     // 3. Update appointment status
+    await db.collection('appointments').doc(appointmentId).update({
+      status: 'confirmed',
+      paymentStatus: 'paid',
+      amount: parseFloat(amount),
+      currency,
+      transactionId,
+      updatedAt: new Date().toISOString()
+    });
     // 4. Send confirmation email
 
     // Mock response

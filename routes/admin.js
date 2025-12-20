@@ -1,5 +1,5 @@
 const express = require('express');
-const { query, validationResult } = require('express-validator');
+const { query, body, validationResult } = require('express-validator');
 const { authenticateToken } = require('../middleware/auth');
 const { asyncHandler } = require('../middleware/errorHandler');
 const { db } = require('../config/firebase');
@@ -91,7 +91,7 @@ router.get('/appointments', authenticateToken, requireAdmin, [
             query = query.where('status', '==', status);
         }
 
-        query = query.orderBy('date', 'desc').orderBy('time', 'desc').limit(limit).offset(offset);
+        query = query.orderBy('date', 'desc').limit(limit).offset(offset);
 
         const snapshot = await query.get();
         const appointments = snapshot.docs.map(doc => ({
@@ -133,9 +133,12 @@ router.get('/stats', authenticateToken, requireAdmin, asyncHandler(async (req, r
         // Assuming $50 per appointment as per frontend logic
         const revenueSnapshot = await db.collection('appointments')
             .where('status', 'in', ['completed', 'confirmed'])
-            .count().get();
-        const revenueCount = revenueSnapshot.data().count;
-        const revenue = revenueCount * 50;
+            .get();
+
+        const revenue = revenueSnapshot.docs.reduce((total, doc) => {
+            const data = doc.data();
+            return total + (data.amount || 50);
+        }, 0);
 
         res.json({
             success: true,
@@ -150,6 +153,45 @@ router.get('/stats', authenticateToken, requireAdmin, asyncHandler(async (req, r
         });
     } catch (error) {
         console.error('Error fetching admin stats:', error);
+        throw error;
+    }
+}));
+
+/**
+ * Update Appointment Status
+ * PUT /v1/admin/appointments/:id/status
+ */
+router.put('/appointments/:id/status', authenticateToken, requireAdmin, [
+    body('status').isIn(['pending', 'confirmed', 'completed', 'cancelled'])
+], asyncHandler(async (req, res) => {
+    const { id } = req.params;
+    const { status } = req.body;
+
+    try {
+        const appointmentRef = db.collection('appointments').doc(id);
+        const doc = await appointmentRef.get();
+
+        if (!doc.exists) {
+            return res.status(404).json({
+                success: false,
+                error: {
+                    code: 'NOT_FOUND',
+                    message: 'Appointment not found'
+                }
+            });
+        }
+
+        await appointmentRef.update({
+            status,
+            updatedAt: new Date().toISOString()
+        });
+
+        res.json({
+            success: true,
+            message: 'Appointment status updated successfully'
+        });
+    } catch (error) {
+        console.error('Error updating appointment status:', error);
         throw error;
     }
 }));

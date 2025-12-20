@@ -14,6 +14,7 @@ COPY config/ ./config/
 COPY routes/ ./routes/
 COPY middleware/ ./middleware/
 COPY services/ ./services/
+COPY scripts/ ./scripts/
 
 # Copy Firebase service account file
 # Note: If using FIREBASE_SERVICE_ACCOUNT_JSON or FIREBASE_SERVICE_ACCOUNT_PATH env vars instead,

@@ -21,7 +21,6 @@ const createAdmin = async () => {
         console.error('Error: ADMIN_EMAIL and ADMIN_PASSWORD must be set in .env');
         process.exit(1);
     }
-
     try {
         console.log(`Creating admin user with email: ${email}`);
 
