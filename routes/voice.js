@@ -10,7 +10,11 @@ const {
   searchDoctors,
   getAvailableSlots,
   bookAppointment,
+  fetchPatientReports,
+  summarizeReports,
+  getNavigationRoute,
 } = require('../services/voiceAssistant');
+const { generateSummary, generateSuggestions } = require('../services/ai');
 
 const router = express.Router();
 
@@ -212,11 +216,118 @@ router.post(
                 },
           });
         }
+        case 'navigate': {
+          const navigation = intent.navigation || {};
+          let route = navigation.route;
+          
+          // If route not provided, try to infer from text
+          if (!route) {
+            route = getNavigationRoute(text);
+          }
+          
+          if (!route) {
+            return res.json({
+              success: false,
+              data: {
+                text: "I'm not sure where you want to go. Try saying 'show reports', 'go to appointments', or 'open AI summary'.",
+                intentAction: intent.action,
+              },
+            });
+          }
+          
+          return res.json({
+            success: true,
+            data: {
+              text: `Opening ${route.replace('/patient/', '').replace('-', ' ')}...`,
+              navigation: { route },
+              intentAction: intent.action,
+            },
+          });
+        }
+        case 'get_reports': {
+          const reports = await fetchPatientReports(userId, intent.reportFilters || {});
+          return res.json({
+            success: true,
+            data: {
+              text: summarizeReports(reports),
+              reports,
+              intentAction: intent.action,
+            },
+          });
+        }
+        case 'get_ai_summary': {
+          try {
+            const summary = await generateSummary(userId);
+            return res.json({
+              success: true,
+              data: {
+                text: summary.summary || summary.overallSummary || 'Here\'s your health summary.',
+                summary,
+                intentAction: intent.action,
+              },
+            });
+          } catch (error) {
+            return res.json({
+              success: false,
+              data: {
+                text: 'Sorry, I couldn\'t generate your health summary right now. Please try again later.',
+                intentAction: intent.action,
+              },
+              error: {
+                code: 'AI_SUMMARY_ERROR',
+                message: error.message,
+              },
+            });
+          }
+        }
+        case 'get_ai_suggestions': {
+          try {
+            const suggestions = await generateSuggestions(userId, null);
+            const suggestionsList = Array.isArray(suggestions) ? suggestions : (suggestions.suggestions || []);
+            
+            if (suggestionsList.length === 0) {
+              return res.json({
+                success: true,
+                data: {
+                  text: 'No suggestions available at the moment.',
+                  suggestions: [],
+                  intentAction: intent.action,
+                },
+              });
+            }
+            
+            const suggestionsText = suggestionsList.slice(0, 3).map((s, i) => {
+              const title = s.title || s.type || 'Suggestion';
+              return `${i + 1}. ${title}`;
+            }).join('; ');
+            
+            return res.json({
+              success: true,
+              data: {
+                text: `Here are some suggestions: ${suggestionsText}${suggestionsList.length > 3 ? ` and ${suggestionsList.length - 3} more` : ''}.`,
+                suggestions: suggestionsList,
+                intentAction: intent.action,
+              },
+            });
+          } catch (error) {
+            return res.json({
+              success: false,
+              data: {
+                text: 'Sorry, I couldn\'t get suggestions right now. Please try again later.',
+                intentAction: intent.action,
+              },
+              error: {
+                code: 'AI_SUGGESTIONS_ERROR',
+                message: error.message,
+              },
+            });
+          }
+        }
         default: {
           return res.json({
             success: true,
             data: {
-              text: "I can help with appointments. Try asking 'What are my appointments today?' or 'Book an appointment with Dr. Smith tomorrow at 2 PM'",
+              text: "I can help with appointments, reports, AI summary, and navigation. Try asking 'What are my appointments today?', 'Show my reports', 'Get AI summary', or 'Go to appointments'",
               intentAction: intent.action,
             },
           });

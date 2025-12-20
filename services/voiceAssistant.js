@@ -114,13 +114,17 @@ Supported actions:
   - get_patient_appointments: list a patient's appointments with optional filters.
   - cancel_appointment: cancel an appointment by id.
   - book_appointment: book a new appointment with a doctor.
+  - navigate: navigate to a page/module (reports, appointments, ai_summary, suggestions, profile, submit_report, etc.).
+  - get_reports: list patient's medical reports with optional filters.
+  - get_ai_summary: get AI-generated health summary.
+  - get_ai_suggestions: get AI health suggestions.
 
 If information is missing, set needsClarification=true and ask only ONE concise question in followUp.
 Keep responses concise and natural; it's okay to be informal and brief.
 
 You MUST return this exact JSON structure:
 {
-  "action": "get_patient_appointments" | "cancel_appointment" | "book_appointment",
+  "action": "get_patient_appointments" | "cancel_appointment" | "book_appointment" | "navigate" | "get_reports" | "get_ai_summary" | "get_ai_suggestions",
   "filters": {
     "status": "pending" | "confirmed" | "completed" | "cancelled" | null,
     "date": "YYYY-MM-DD" | null,
@@ -135,6 +139,17 @@ You MUST return this exact JSON structure:
     "time": "HH:mm" | null,
     "duration": 30,
     "notes": "string" | null
+  },
+  "navigation": {
+    "route": "string" | null,
+    "moduleId": "string" | null
+  },
+  "reportFilters": {
+    "category": "string" | null,
+    "fileType": "string" | null,
+    "startDate": "YYYY-MM-DD" | null,
+    "endDate": "YYYY-MM-DD" | null,
+    "search": "string" | null
   },
   "needsClarification": false,
   "followUp": "string" | null
@@ -152,6 +167,10 @@ Rules:
   - If time is missing, set needsClarification=true and followUp="What time would you like to book?"
 - Prefer specific date if user said today/tomorrow/weekday; resolve to ISO date (YYYY-MM-DD).
 - If user asks for upcoming/next, set startDate=today (YYYY-MM-DD) and leave endDate=null.
+- For navigate action:
+  - Common routes: "reports" → "/patient/reports", "appointments" → "/patient/appointments", "ai summary" → "/patient/ai-summary", "suggestions" → "/patient/suggestions", "profile" → "/patient/profile", "submit report" → "/patient/submit-report"
+  - Extract route from user intent (e.g., "show reports" → route="/patient/reports", "go to appointments" → route="/patient/appointments")
+- For get_reports: extract filters from user query (category, date range, search term).
 - Output ONLY the JSON object, nothing else. No markdown, no code blocks, no explanations.`;
 
   const prompt = `${system}
@@ -204,6 +223,11 @@ Assistant:`;
         duration: 30,
         notes: null,
       },
+      navigation: parsed.navigation || {
+        route: null,
+        moduleId: null,
+      },
+      reportFilters: parsed.reportFilters || {},
       needsClarification: parsed.needsClarification || false,
       followUp: parsed.followUp || null,
     };
@@ -267,6 +291,8 @@ function fallbackIntentInference(text) {
       filters: {},
       appointmentId: null,
       booking,
+      navigation: null,
+      reportFilters: {},
       needsClarification: missing.length > 0,
       followUp: missing.length > 0 
         ? `To book an appointment, I need: ${missing.join(', ')}. ${missing.length === 1 ? 'What' : 'What are'} the ${missing.join(' and ')}?`
@@ -281,8 +307,67 @@ function fallbackIntentInference(text) {
       filters: {},
       appointmentId: null,
       booking: null,
+      navigation: null,
+      reportFilters: {},
       needsClarification: true,
       followUp: 'Which appointment would you like to cancel? Please provide the appointment ID.',
+    };
+  }
+  
+  // Check for navigation intents
+  const navRoute = getNavigationRoute(text);
+  if (navRoute) {
+    return {
+      action: 'navigate',
+      filters: {},
+      appointmentId: null,
+      booking: null,
+      navigation: { route: navRoute, moduleId: null },
+      reportFilters: {},
+      needsClarification: false,
+      followUp: null,
+    };
+  }
+  
+  // Check for reports
+  if (lowerText.includes('report') && (lowerText.includes('show') || lowerText.includes('list') || lowerText.includes('view') || lowerText.includes('my'))) {
+    return {
+      action: 'get_reports',
+      filters: {},
+      appointmentId: null,
+      booking: null,
+      navigation: null,
+      reportFilters: {},
+      needsClarification: false,
+      followUp: null,
+    };
+  }
+  
+  // Check for AI summary
+  if (lowerText.includes('summary') || lowerText.includes('ai summary') || lowerText.includes('health summary')) {
+    return {
+      action: 'get_ai_summary',
+      filters: {},
+      appointmentId: null,
+      booking: null,
+      navigation: null,
+      reportFilters: {},
+      needsClarification: false,
+      followUp: null,
+    };
+  }
+  
+  // Check for suggestions
+  if (lowerText.includes('suggestion') || lowerText.includes('recommendation') || lowerText.includes('advice')) {
+    return {
+      action: 'get_ai_suggestions',
+      filters: {},
+      appointmentId: null,
+      booking: null,
+      navigation: null,
+      reportFilters: {},
+      needsClarification: false,
+      followUp: null,
     };
   }
   
@@ -309,6 +394,8 @@ function fallbackIntentInference(text) {
     filters,
     appointmentId: null,
     booking: null,
+    navigation: null,
+    reportFilters: {},
     needsClarification: false,
     followUp: null,
   };
@@ -492,6 +579,92 @@ async function bookAppointment(userId, booking) {
   };
 }
 
+// Fetch patient reports
+async function fetchPatientReports(userId, filters = {}) {
+  let query = db.collection('reports').where('userId', '==', userId);
+
+  if (filters.category) {
+    query = query.where('category', '==', filters.category);
+  }
+  if (filters.fileType) {
+    query = query.where('fileType', '==', filters.fileType);
+  }
+  if (filters.startDate) {
+    query = query.where('uploadDate', '>=', filters.startDate);
+  }
+  if (filters.endDate) {
+    query = query.where('uploadDate', '<=', filters.endDate);
+  }
+
+  query = query.orderBy('uploadDate', 'desc');
+
+  const snapshot = await query.get();
+  let reports = snapshot.docs.map((doc) => {
+    const data = doc.data();
+    return {
+      reportId: doc.id,
+      fileName: data.fileName,
+      category: data.category,
+      fileType: data.fileType,
+      uploadDate: data.uploadDate,
+    };
+  });
+
+  // Apply search filter if provided
+  if (filters.search) {
+    const searchLower = filters.search.toLowerCase();
+    reports = reports.filter(report => 
+      report.fileName?.toLowerCase().includes(searchLower) ||
+      report.category?.toLowerCase().includes(searchLower)
+    );
+  }
+
+  return reports;
+}
+
+function summarizeReports(reports) {
+  if (!reports.length) {
+    return 'You have no reports.';
+  }
+
+  const lines = reports.slice(0, 5).map((r) => {
+    return `${r.fileName} (${r.category || 'uncategorized'})`;
+  });
+
+  const more = reports.length > 5 ? ` ...and ${reports.length - 5} more.` : '';
+  return `You have ${reports.length} report${reports.length === 1 ? '' : 's'}: ${lines.join('; ')}${more}`;
+}
+
+// Map navigation keywords to routes
+function getNavigationRoute(text) {
+  const lowerText = text.toLowerCase();
+  
+  const routeMap = {
+    'reports': '/patient/reports',
+    'report': '/patient/reports',
+    'appointments': '/patient/appointments',
+    'appointment': '/patient/appointments',
+    'ai summary': '/patient/ai-summary',
+    'summary': '/patient/ai-summary',
+    'suggestions': '/patient/suggestions',
+    'suggestion': '/patient/suggestions',
+    'profile': '/patient/profile',
+    'submit report': '/patient/submit-report',
+    'upload report': '/patient/submit-report',
+    'book appointment': '/patient/book-appointment',
+    'share reports': '/patient/share-reports',
+    'export reports': '/patient/export-reports',
+  };
+
+  for (const [keyword, route] of Object.entries(routeMap)) {
+    if (lowerText.includes(keyword)) {
+      return route;
+    }
+  }
+
+  return null;
+}
+
 module.exports = {
   inferIntentFromText,
   fetchPatientAppointments,
@@ -500,6 +673,9 @@ module.exports = {
   searchDoctors,
   getAvailableSlots,
   bookAppointment,
+  fetchPatientReports,
+  summarizeReports,
+  getNavigationRoute,
 };
 
 
