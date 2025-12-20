@@ -13,6 +13,7 @@ const {
   fetchPatientReports,
   summarizeReports,
   getNavigationRoute,
+  generateHumanizedResponse,
 } = require('../services/voiceAssistant');
 const { generateSummary, generateSuggestions } = require('../services/ai');
 
@@ -64,10 +65,16 @@ router.post(
       switch (intent.action) {
         case 'get_patient_appointments': {
           const appointments = await fetchPatientAppointments(userId, intent.filters || {});
+          const humanizedResponse = await generateHumanizedResponse(
+            text,
+            appointments,
+            intent.action,
+            context
+          );
           return res.json({
             success: true,
             data: {
-              text: summarizeAppointments(appointments),
+              text: humanizedResponse,
               appointments,
               intentAction: intent.action,
             },
@@ -75,20 +82,32 @@ router.post(
         }
         case 'cancel_appointment': {
           if (!intent.appointmentId) {
+            const humanizedResponse = await generateHumanizedResponse(
+              text,
+              { needsClarification: true, type: 'cancel_appointment' },
+              intent.action,
+              context
+            );
             return res.json({
               success: true,
               data: {
-                text: 'Which appointment ID should I cancel?',
+                text: humanizedResponse || 'Which appointment would you like to cancel?',
                 intentAction: intent.action,
                 needsClarification: true,
               },
             });
           }
           const result = await cancelAppointment(intent.appointmentId, userId);
+          const humanizedResponse = await generateHumanizedResponse(
+            text,
+            result,
+            intent.action,
+            context
+          );
           return res.json({
             success: result.success,
             data: {
-              text: result.message,
+              text: humanizedResponse || result.message,
               intentAction: intent.action,
             },
             error: result.success
@@ -124,10 +143,18 @@ router.post(
               }
             }
             
+            // Generate humanized follow-up
+            const humanizedFollowUp = await generateHumanizedResponse(
+              text,
+              { needsClarification: true, missingFields: missing, type: 'book_appointment' },
+              intent.action,
+              context
+            );
+            
             return res.json({
               success: true,
               data: {
-                text: followUp,
+                text: humanizedFollowUp || followUp,
                 needsClarification: true,
                 missingFields: missing,
                 intentAction: intent.action,
@@ -140,10 +167,16 @@ router.post(
           if (!doctorId && booking.doctorName) {
             const doctors = await searchDoctors(booking.doctorName);
             if (doctors.length === 0) {
+              const humanizedResponse = await generateHumanizedResponse(
+                text,
+                { doctorName: booking.doctorName, found: false },
+                intent.action,
+                context
+              );
               return res.json({
                 success: false,
                 data: {
-                  text: `I couldn't find a doctor named "${booking.doctorName}". Could you please provide the exact doctor name?`,
+                  text: humanizedResponse || `I couldn't find a doctor named "${booking.doctorName}". Could you please provide the exact doctor name?`,
                   intentAction: intent.action,
                 },
                 error: {
@@ -152,11 +185,16 @@ router.post(
                 },
               });
             } else if (doctors.length > 1) {
-              const doctorList = doctors.map(d => d.name).join(', ');
+              const humanizedResponse = await generateHumanizedResponse(
+                text,
+                { doctors: doctors.map(d => d.name), multiple: true },
+                intent.action,
+                context
+              );
               return res.json({
                 success: true,
                 data: {
-                  text: `I found multiple doctors: ${doctorList}. Which one would you like to book with?`,
+                  text: humanizedResponse || `I found multiple doctors: ${doctors.map(d => d.name).join(', ')}. Which one would you like to book with?`,
                   doctors,
                   intentAction: intent.action,
                   needsClarification: true,
@@ -171,20 +209,31 @@ router.post(
           if (doctorId && booking.date && !booking.time) {
             const availableSlots = await getAvailableSlots(doctorId, booking.date);
             if (availableSlots.length === 0) {
+              const humanizedResponse = await generateHumanizedResponse(
+                text,
+                { date: booking.date, slotsAvailable: false },
+                intent.action,
+                context
+              );
               return res.json({
                 success: false,
                 data: {
-                  text: `No available slots on ${booking.date}. Would you like to choose a different date?`,
+                  text: humanizedResponse || `No available slots on ${booking.date}. Would you like to choose a different date?`,
                   intentAction: intent.action,
                   needsClarification: true,
                 },
               });
             }
-            const slotsText = availableSlots.slice(0, 5).join(', ');
+            const humanizedResponse = await generateHumanizedResponse(
+              text,
+              { date: booking.date, availableSlots, slotsAvailable: true },
+              intent.action,
+              context
+            );
             return res.json({
               success: true,
               data: {
-                text: `Available slots on ${booking.date}: ${slotsText}${availableSlots.length > 5 ? ` and ${availableSlots.length - 5} more` : ''}. What time would you like?`,
+                text: humanizedResponse || `Available slots on ${booking.date}: ${availableSlots.slice(0, 5).join(', ')}${availableSlots.length > 5 ? ` and ${availableSlots.length - 5} more` : ''}. What time would you like?`,
                 availableSlots,
                 intentAction: intent.action,
                 needsClarification: true,
@@ -201,10 +250,17 @@ router.post(
             notes: booking.notes,
           });
           
+          const humanizedResponse = await generateHumanizedResponse(
+            text,
+            result,
+            intent.action,
+            context
+          );
+          
           return res.json({
             success: result.success,
             data: {
-              text: result.message,
+              text: humanizedResponse || result.message,
               appointmentId: result.appointmentId,
               intentAction: intent.action,
             },
@@ -246,10 +302,16 @@ router.post(
         }
         case 'get_reports': {
           const reports = await fetchPatientReports(userId, intent.reportFilters || {});
+          const humanizedResponse = await generateHumanizedResponse(
+            text,
+            reports,
+            intent.action,
+            context
+          );
           return res.json({
             success: true,
             data: {
-              text: summarizeReports(reports),
+              text: humanizedResponse,
               reports,
               intentAction: intent.action,
             },
@@ -258,10 +320,16 @@ router.post(
         case 'get_ai_summary': {
           try {
             const summary = await generateSummary(userId);
+            const humanizedResponse = await generateHumanizedResponse(
+              text,
+              summary,
+              intent.action,
+              context
+            );
             return res.json({
               success: true,
               data: {
-                text: summary.summary || summary.overallSummary || 'Here\'s your health summary.',
+                text: humanizedResponse || summary.summary || summary.overallSummary || 'Here\'s your health summary.',
                 summary,
                 intentAction: intent.action,
               },
@@ -286,25 +354,33 @@ router.post(
             const suggestionsList = Array.isArray(suggestions) ? suggestions : (suggestions.suggestions || []);
             
             if (suggestionsList.length === 0) {
+              const humanizedResponse = await generateHumanizedResponse(
+                text,
+                { suggestions: [] },
+                intent.action,
+                context
+              );
               return res.json({
                 success: true,
                 data: {
-                  text: 'No suggestions available at the moment.',
+                  text: humanizedResponse || 'No suggestions available at the moment.',
                   suggestions: [],
                   intentAction: intent.action,
                 },
               });
             }
             
-            const suggestionsText = suggestionsList.slice(0, 3).map((s, i) => {
-              const title = s.title || s.type || 'Suggestion';
-              return `${i + 1}. ${title}`;
-            }).join('; ');
+            const humanizedResponse = await generateHumanizedResponse(
+              text,
+              suggestionsList,
+              intent.action,
+              context
+            );
             
             return res.json({
               success: true,
               data: {
-                text: `Here are some suggestions: ${suggestionsText}${suggestionsList.length > 3 ? ` and ${suggestionsList.length - 3} more` : ''}.`,
+                text: humanizedResponse,
                 suggestions: suggestionsList,
                 intentAction: intent.action,
               },

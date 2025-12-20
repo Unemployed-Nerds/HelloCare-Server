@@ -665,6 +665,113 @@ function getNavigationRoute(text) {
   return null;
 }
 
+// Generate humanized, context-aware response using LLM
+async function generateHumanizedResponse(userQuery, data, action, context = []) {
+  try {
+    if (!genAI) {
+      console.warn('Gemini API not configured, using fallback summary');
+      return fallbackSummary(data, action);
+    }
+    
+    const model = genAI.getGenerativeModel({ 
+      model: MODEL_NAME,
+    });
+    
+    // Build context string from conversation history
+    const contextString = context.length > 0
+      ? context.map((msg, idx) => {
+          const role = msg.role === 'user' ? 'User' : 'Assistant';
+          return `${role}: ${msg.text}`;
+        }).join('\n')
+      : '(no prior conversation)';
+    
+    // Build data summary for the LLM
+    let dataSummary = '';
+    if (action === 'get_patient_appointments') {
+      if (data.length === 0) {
+        dataSummary = 'The user has no appointments matching their query.';
+      } else {
+        dataSummary = `The user has ${data.length} appointment(s):\n${data.map((apt, idx) => {
+          const date = apt.date ? new Date(apt.date).toLocaleDateString() : 'Date TBD';
+          const time = apt.time || 'Time TBD';
+          const doctor = apt.doctorName || 'Doctor TBD';
+          const status = apt.status || 'pending';
+          return `${idx + 1}. ${doctor} on ${date} at ${time} (${status})`;
+        }).join('\n')}`;
+      }
+    } else if (action === 'get_reports') {
+      if (data.length === 0) {
+        dataSummary = 'The user has no medical reports.';
+      } else {
+        dataSummary = `The user has ${data.length} report(s):\n${data.map((rpt, idx) => {
+          return `${idx + 1}. ${rpt.fileName} (${rpt.category || 'uncategorized'}) - uploaded ${rpt.uploadDate || 'recently'}`;
+        }).join('\n')}`;
+      }
+    } else if (action === 'book_appointment') {
+      dataSummary = `Appointment booking ${data.success ? 'successful' : 'failed'}. ${data.message || ''}`;
+    } else if (action === 'cancel_appointment') {
+      dataSummary = `Appointment cancellation ${data.success ? 'successful' : 'failed'}. ${data.message || ''}`;
+    } else if (action === 'get_ai_summary') {
+      dataSummary = typeof data === 'string' ? data : JSON.stringify(data);
+    } else if (action === 'get_ai_suggestions') {
+      const suggestionsList = Array.isArray(data) ? data : (data.suggestions || []);
+      dataSummary = suggestionsList.length > 0
+        ? `Suggestions: ${suggestionsList.map((s, idx) => `${idx + 1}. ${s.title || s.type || 'Suggestion'}: ${s.description || ''}`).join('\n')}`
+        : 'No suggestions available.';
+    } else {
+      dataSummary = typeof data === 'string' ? data : JSON.stringify(data);
+    }
+    
+    const prompt = `You are a friendly, helpful healthcare voice assistant. Your role is to provide natural, conversational responses to users.
+
+Previous conversation context:
+${contextString}
+
+User's current query: "${userQuery}"
+
+Action taken: ${action}
+
+Data retrieved:
+${dataSummary}
+
+Generate a natural, conversational response that:
+1. Directly addresses the user's query in a friendly, human way
+2. Incorporates the data naturally (don't just list it)
+3. Uses natural language (e.g., "You have 2 appointments coming up" instead of "2 appointments found")
+4. Is concise but informative (1-3 sentences max)
+5. Sounds like a helpful assistant, not a robot reading data
+6. If asking follow-up questions, make them conversational and natural
+7. Be warm and empathetic, especially for healthcare context
+
+Response (just the text, no quotes or explanations):`;
+
+    const result = await model.generateContent(prompt);
+    const response = await result.response.text();
+    
+    return response.trim().replace(/^["']|["']$/g, ''); // Remove surrounding quotes if any
+  } catch (error) {
+    console.error('Error generating humanized response:', error);
+    // Fallback to simple summary
+    return fallbackSummary(data, action);
+  }
+}
+
+// Fallback summary if LLM fails
+function fallbackSummary(data, action) {
+  if (action === 'get_patient_appointments') {
+    if (data.length === 0) return "You don't have any appointments scheduled.";
+    return `You have ${data.length} appointment${data.length === 1 ? '' : 's'} coming up.`;
+  } else if (action === 'get_reports') {
+    if (data.length === 0) return "You don't have any reports uploaded yet.";
+    return `You have ${data.length} report${data.length === 1 ? '' : 's'} in your records.`;
+  } else if (action === 'book_appointment') {
+    return data.success ? "Great! I've booked your appointment." : "Sorry, I couldn't book your appointment.";
+  } else if (action === 'cancel_appointment') {
+    return data.success ? "I've cancelled your appointment." : "Sorry, I couldn't cancel your appointment.";
+  }
+  return 'I found that information for you.';
+}
+
 module.exports = {
   inferIntentFromText,
   fetchPatientAppointments,
@@ -676,6 +783,7 @@ module.exports = {
   fetchPatientReports,
   summarizeReports,
   getNavigationRoute,
+  generateHumanizedResponse,
 };
 
 
