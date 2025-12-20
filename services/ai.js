@@ -1,24 +1,26 @@
 /* * ai_medical_summary_service.js
- * - REFATOR for Hugging Face Inference API and the specified MedGemma model.
- * - MODEL NAME UPDATED to 'google/medgemma-27b-it'
+ * - Refactored for Google Gemini API
  * - Integrated HEALTH_REPORT_ANALYST_SYSTEM_PROMPT.
  * - FIX APPLIED: Removed reportId and structural markers from the prompt content.
- * * NOTE: This relies on a HUGGINGFACE_API_KEY environment variable. Performance will be slow
- * and potentially hit rate limits on the standard Hugging Face Inference API.
+ * * NOTE: This relies on a GEMINI_API_KEY environment variable.
  */
 
 const { db } = require('../config/firebase'); // keep your existing firebase config path
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 // Optional validator (AJV). If not installed, code still works with a lightweight fallback.
 let ajv = null;
 try { ajv = require('ajv')(); } catch (e) { /* ajv not installed, we'll fallback to basic checks */ }
 
-// --- Hugging Face Configuration ---
-const MODEL_NAME = 'google/medgemma-27b-text-it'; // <-- UPDATED to 27B
-// const API_URL = `https://api-inference.huggingface.co/models/${MODEL_NAME}`;
-const API_URL = `https://router.huggingface.co/hf-inference/models/${MODEL_NAME}`;
+// --- Google Gemini Configuration ---
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+const MODEL_NAME = 'gemini-2.5-flash'; // Using Gemini 3.0 Pro (latest stable model)
 
-const HUGGINGFACE_API_KEY = process.env.HUGGINGFACE_API_KEY;
+// Initialize Gemini client
+let genAI = null;
+if (GEMINI_API_KEY) {
+  genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
+}
 
 // --- API Constants ---
 const DEFAULT_BATCH_SIZE = 5; 
@@ -184,74 +186,40 @@ async function withRetries(fn, options = {}) {
   }
 }
 
-// --- Hugging Face Inference API client ---
-async function huggingFaceInference(fullPrompt, timeoutMs = API_CALL_TIMEOUT_MS) {
-  if (!HUGGINGFACE_API_KEY) throw new Error('Hugging Face API key not configured (HUGGINGFACE_API_KEY)');
-
-  // Use a timeout controller for the fetch request
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-
-  try {
-    const response = await fetch(API_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${HUGGINGFACE_API_KEY}`,
-      },
-      body: JSON.stringify({
-        // MedGemma is an instruction-tuned model, we package the prompt as a single instruction.
-        inputs: fullPrompt,
-        parameters: {
-          return_full_text: false, // Only return the generated text
-          max_new_tokens: 4096,
-          temperature: 0.1, // Low temperature for deterministic output
-          do_sample: false, // Prefer greedy decoding
-          use_cache: true
-        },
-        options: {
-          wait_for_model: true // Wait for the model to load if it's currently unloaded (can take a long time for 27B)
-        }
-      }),
-      signal: controller.signal
-    });
-
-    clearTimeout(timeoutId);
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Hugging Face API Error ${response.status}: ${errorText}`);
-    }
-
-    const data = await response.json();
-    
-    // HF Inference API usually returns an array of results
-    if (Array.isArray(data) && data.length > 0 && data[0].generated_text) {
-        return data[0].generated_text.trim();
-    }
-    
-    throw new Error('Hugging Face API returned an unexpected response format.');
-
-  } catch (error) {
-    clearTimeout(timeoutId);
-    if (error.name === 'AbortError') {
-      throw new Error('Model call timed out');
-    }
-    throw error;
-  }
-}
-
-// Adapts the old Google AI SDK call structure to the new Hugging Face client
+// --- Google Gemini API client ---
 async function callModel(promptOptions, timeoutMs = API_CALL_TIMEOUT_MS) {
+  if (!GEMINI_API_KEY) throw new Error('Gemini API key not configured (GEMINI_API_KEY)');
+  if (!genAI) throw new Error('Gemini client not initialized');
+
   const systemInstruction = promptOptions.systemInstruction.parts[0].text;
   const userPrompt = promptOptions.contents[0].parts[0].text;
-  
-  // Format the prompt for instruction-following models (e.g., using a simple instruction pattern)
-  const fullPrompt = `System Instruction: ${systemInstruction}\n\nUser Request: ${userPrompt}`;
 
-  return withRetries(() => huggingFaceInference(fullPrompt, timeoutMs), { retries: MODEL_CALL_RETRIES });
+  // Get the model - combine system instruction with user prompt for compatibility
+  const model = genAI.getGenerativeModel({ model: MODEL_NAME });
+
+  // Combine system instruction and user prompt
+  // For gemini-pro, we'll include system instruction as part of the prompt
+  const fullPrompt = `${systemInstruction}\n\n${userPrompt}`;
+
+  // Create a timeout promise
+  const timeoutPromise = new Promise((_, reject) => {
+    setTimeout(() => reject(new Error('Model call timed out')), timeoutMs);
+  });
+
+  // Make the API call with timeout
+  const apiCall = async () => {
+    try {
+      const result = await model.generateContent(fullPrompt);
+      const response = await result.response;
+      return response.text();
+    } catch (error) {
+      throw new Error(`Gemini API Error: ${error.message}`);
+    }
+  };
+
+  return withRetries(() => Promise.race([apiCall(), timeoutPromise]), { retries: MODEL_CALL_RETRIES });
 }
-// --- END Hugging Face Inference API client ---
+// --- END Google Gemini API client ---
 
 
 function chunkArray(arr, size) {
@@ -330,7 +298,7 @@ if (ajv) validateSuggestions = ajv.compile(suggestionsSchema);
  * @returns {Promise<{summary: string, generatedAt: string, reportCount: number}>}
  */
 async function generateSummaryForReports(reportIds) {
-  if (!HUGGINGFACE_API_KEY) throw new Error('Hugging Face API key not configured');
+  if (!GEMINI_API_KEY) throw new Error('Gemini API key not configured');
   if (!reportIds || !Array.isArray(reportIds) || reportIds.length === 0) {
     throw new Error('Invalid reportIds');
   }
@@ -403,7 +371,7 @@ async function generateSummaryForReports(reportIds) {
 }
 
 async function generateSummary(userId) {
-  if (!HUGGINGFACE_API_KEY) throw new Error('Hugging Face API key not configured');
+  if (!GEMINI_API_KEY) throw new Error('Gemini API key not configured');
   if (!userId || typeof userId !== 'string') throw new Error('Invalid userId');
 
   try {
@@ -474,7 +442,7 @@ async function generateSummary(userId) {
  * - Fix: Removes internal reportId from text sent to model.
  */
 async function generateSuggestions(userId, reportId = null) {
-  if (!HUGGINGFACE_API_KEY) throw new Error('Hugging Face API key not configured');
+  if (!GEMINI_API_KEY) throw new Error('Gemini API key not configured');
   if (!userId || typeof userId !== 'string') throw new Error('Invalid userId');
 
   try {
