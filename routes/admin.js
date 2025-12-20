@@ -44,14 +44,25 @@ const requireAdmin = async (req, res, next) => {
  */
 router.get('/logs', authenticateToken, requireAdmin, [
     query('limit').optional().isInt({ min: 1, max: 100 }),
-    query('offset').optional().isInt({ min: 0 })
+    query('offset').optional().isInt({ min: 0 }),
+    query('role').optional().isIn(['patient', 'doctor', 'admin'])
 ], asyncHandler(async (req, res) => {
     const limit = parseInt(req.query.limit) || 50;
     const offset = parseInt(req.query.offset) || 0;
+    const role = req.query.role;
 
     try {
-        console.log('Fetching admin logs (activity_logs)...');
-        const snapshot = await db.collection('activity_logs')
+        console.log(`Fetching admin logs (activity_logs) role=${role || 'all'}...`);
+
+        let query = db.collection('activity_logs');
+
+        if (role) {
+            query = query.where('role', '==', role);
+        }
+
+        // Note: Filtering by role and ordering by timestamp requires a Firestore Composite Index.
+        // If this fails with "The query requires an index", follow the link in the error to create it.
+        const snapshot = await query
             .orderBy('timestamp', 'desc')
             .limit(limit)
             .offset(offset)
