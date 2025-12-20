@@ -10,16 +10,24 @@ const { db } = require('../config/firebase');
  */
 const logAdminAction = async (adminId, adminName, action, details = {}, ip = null) => {
   try {
+    // Legacy: Keep writing to admin_logs for now, or just switch to activity_logs
+    // For unified view, we'll write to activity_logs as role='admin'
     const logData = {
-      adminId,
-      adminName,
+      userId: adminId,
+      userName: adminName,
+      role: 'admin',
       action,
       details,
       ip,
       timestamp: new Date().toISOString()
     };
 
-    await db.collection('admin_logs').add(logData);
+    await db.collection('activity_logs').add(logData);
+
+    // Also write to admin_logs for backward compatibility if needed, 
+    // but for now let's prioritize the unified collection.
+    // await db.collection('admin_logs').add({ ... }); 
+
     console.log(`[Audit Log] ${action} by ${adminName} (${adminId})`);
   } catch (error) {
     console.error('Error writing audit log:', error);

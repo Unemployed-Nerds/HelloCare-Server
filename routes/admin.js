@@ -50,8 +50,8 @@ router.get('/logs', authenticateToken, requireAdmin, [
     const offset = parseInt(req.query.offset) || 0;
 
     try {
-        console.log('Fetching admin logs...');
-        const snapshot = await db.collection('admin_logs')
+        console.log('Fetching admin logs (activity_logs)...');
+        const snapshot = await db.collection('activity_logs')
             .orderBy('timestamp', 'desc')
             .limit(limit)
             .offset(offset)

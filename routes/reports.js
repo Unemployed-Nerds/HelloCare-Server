@@ -645,6 +645,10 @@ router.delete('/:reportId', authenticateToken, asyncHandler(async (req, res) => 
       console.error(`Error invalidating cache for user ${userId}:`, err);
     });
 
+    // LOG ACTION
+    const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+    logUserAction(userId, 'User', 'patient', 'DELETE_REPORT', { reportId, title: reportData.title }, ip);
+
     res.json({
       success: true,
       message: 'Report deleted successfully'
