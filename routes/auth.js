@@ -1067,5 +1067,59 @@ router.post('/admin/login', [
   }
 }));
 
+/**
+ * Admin Logout
+ * POST /v1/auth/admin/logout
+ * Logs the admin logout action
+ */
+const { authenticateToken } = require('../middleware/auth');
+
+router.post('/admin/logout', authenticateToken, asyncHandler(async (req, res) => {
+  const userId = req.user.uid;
+
+  try {
+    // Fetch user data for logging
+    const userDoc = await db.collection('users').doc(userId).get();
+
+    if (!userDoc.exists) {
+      return res.status(401).json({
+        success: false,
+        error: {
+          code: 'UNAUTHORIZED',
+          message: 'User not found',
+          details: {}
+        }
+      });
+    }
+
+    const userData = userDoc.data();
+
+    // Only allow admins to use this endpoint
+    if (userData.role !== 'admin') {
+      return res.status(403).json({
+        success: false,
+        error: {
+          code: 'FORBIDDEN',
+          message: 'Admin access required',
+          details: {}
+        }
+      });
+    }
+
+    // Log the logout action
+    const { logAdminAction } = require('../services/logger');
+    const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+    await logAdminAction(userId, userData.name, 'LOGOUT', { success: true }, ip);
+
+    res.json({
+      success: true,
+      message: 'Logged out successfully'
+    });
+  } catch (error) {
+    console.error('Admin logout error:', error);
+    throw error;
+  }
+}));
+
 module.exports = router;
 
