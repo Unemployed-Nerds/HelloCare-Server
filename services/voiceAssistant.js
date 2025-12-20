@@ -87,10 +87,18 @@ function extractJsonFromText(text) {
 }
 
 // Parse user text into an intent for appointments
-async function inferIntentFromText(text) {
+async function inferIntentFromText(text, context = [], lastAction = null) {
   if (!genAI) {
     throw new Error('Gemini client not initialized. Set GEMINI_API_KEY.');
   }
+
+  // Build conversation context string (last 6 messages)
+  const contextString = Array.isArray(context)
+    ? context
+        .slice(-6)
+        .map((m) => `${m.role || 'user'}: ${m.text}`)
+        .join('\n')
+    : '';
 
   const model = genAI.getGenerativeModel({ 
     model: MODEL_NAME,
@@ -108,6 +116,7 @@ Supported actions:
   - book_appointment: book a new appointment with a doctor.
 
 If information is missing, set needsClarification=true and ask only ONE concise question in followUp.
+Keep responses concise and natural; it's okay to be informal and brief.
 
 You MUST return this exact JSON structure:
 {
@@ -145,7 +154,15 @@ Rules:
 - If user asks for upcoming/next, set startDate=today (YYYY-MM-DD) and leave endDate=null.
 - Output ONLY the JSON object, nothing else. No markdown, no code blocks, no explanations.`;
 
-  const prompt = `${system}\n\nUser: ${text}\nAssistant:`;
+  const prompt = `${system}
+
+Previous context:
+${contextString || '(no prior messages)'}
+
+Previous action (if any): ${lastAction || 'unknown'}
+
+User: ${text}
+Assistant:`;
 
   try {
     const result = await model.generateContent(prompt);

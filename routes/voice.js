@@ -22,7 +22,11 @@ const router = express.Router();
 router.post(
   '/assistant',
   authenticateToken,
-  [body('text').isString().trim().notEmpty()],
+  [
+    body('text').isString().trim().notEmpty(),
+    body('context').optional().isArray(),
+    body('lastAction').optional().isString(),
+  ],
   asyncHandler(async (req, res) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -36,17 +40,19 @@ router.post(
       });
     }
 
-    const { text } = req.body;
+    const { text, context = [], lastAction = null } = req.body;
     const userId = req.user.uid;
 
     try {
-      const intent = await inferIntentFromText(text);
+      const intent = await inferIntentFromText(text, context, lastAction);
 
       if (intent.needsClarification) {
         return res.json({
           success: true,
           data: {
             text: intent.followUp || 'Can you provide more details?',
+            intentAction: intent.action,
+            needsClarification: true,
           },
         });
       }
@@ -59,6 +65,7 @@ router.post(
             data: {
               text: summarizeAppointments(appointments),
               appointments,
+              intentAction: intent.action,
             },
           });
         }
@@ -68,6 +75,8 @@ router.post(
               success: true,
               data: {
                 text: 'Which appointment ID should I cancel?',
+                intentAction: intent.action,
+                needsClarification: true,
               },
             });
           }
@@ -76,6 +85,7 @@ router.post(
             success: result.success,
             data: {
               text: result.message,
+              intentAction: intent.action,
             },
             error: result.success
               ? null
@@ -116,6 +126,7 @@ router.post(
                 text: followUp,
                 needsClarification: true,
                 missingFields: missing,
+                intentAction: intent.action,
               },
             });
           }
@@ -129,6 +140,7 @@ router.post(
                 success: false,
                 data: {
                   text: `I couldn't find a doctor named "${booking.doctorName}". Could you please provide the exact doctor name?`,
+                  intentAction: intent.action,
                 },
                 error: {
                   code: 'DOCTOR_NOT_FOUND',
@@ -142,6 +154,8 @@ router.post(
                 data: {
                   text: `I found multiple doctors: ${doctorList}. Which one would you like to book with?`,
                   doctors,
+                  intentAction: intent.action,
+                  needsClarification: true,
                 },
               });
             } else {
@@ -157,6 +171,8 @@ router.post(
                 success: false,
                 data: {
                   text: `No available slots on ${booking.date}. Would you like to choose a different date?`,
+                  intentAction: intent.action,
+                  needsClarification: true,
                 },
               });
             }
@@ -166,6 +182,8 @@ router.post(
               data: {
                 text: `Available slots on ${booking.date}: ${slotsText}${availableSlots.length > 5 ? ` and ${availableSlots.length - 5} more` : ''}. What time would you like?`,
                 availableSlots,
+                intentAction: intent.action,
+                needsClarification: true,
               },
             });
           }
@@ -184,6 +202,7 @@ router.post(
             data: {
               text: result.message,
               appointmentId: result.appointmentId,
+              intentAction: intent.action,
             },
             error: result.success
               ? null
@@ -198,6 +217,7 @@ router.post(
             success: true,
             data: {
               text: "I can help with appointments. Try asking 'What are my appointments today?' or 'Book an appointment with Dr. Smith tomorrow at 2 PM'",
+              intentAction: intent.action,
             },
           });
         }
