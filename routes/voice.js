@@ -7,6 +7,9 @@ const {
   fetchPatientAppointments,
   summarizeAppointments,
   cancelAppointment,
+  searchDoctors,
+  getAvailableSlots,
+  bookAppointment,
 } = require('../services/voiceAssistant');
 
 const router = express.Router();
@@ -82,11 +85,119 @@ router.post(
                 },
           });
         }
+        case 'book_appointment': {
+          const booking = intent.booking || {};
+          
+          // Check what information is missing
+          const missing = [];
+          if (!booking.doctorName && !booking.doctorId) missing.push('doctor');
+          if (!booking.date) missing.push('date');
+          if (!booking.time) missing.push('time');
+          
+          // If information is missing, ask follow-up questions
+          if (missing.length > 0 || intent.needsClarification) {
+            let followUp = intent.followUp;
+            
+            if (!followUp) {
+              if (missing.includes('doctor')) {
+                followUp = 'Which doctor would you like to book with?';
+              } else if (missing.includes('date')) {
+                followUp = 'What date would you like to book?';
+              } else if (missing.includes('time')) {
+                followUp = 'What time would you like to book?';
+              } else {
+                followUp = 'I need more information to book your appointment.';
+              }
+            }
+            
+            return res.json({
+              success: true,
+              data: {
+                text: followUp,
+                needsClarification: true,
+                missingFields: missing,
+              },
+            });
+          }
+          
+          // Search for doctor if only name is provided
+          let doctorId = booking.doctorId;
+          if (!doctorId && booking.doctorName) {
+            const doctors = await searchDoctors(booking.doctorName);
+            if (doctors.length === 0) {
+              return res.json({
+                success: false,
+                data: {
+                  text: `I couldn't find a doctor named "${booking.doctorName}". Could you please provide the exact doctor name?`,
+                },
+                error: {
+                  code: 'DOCTOR_NOT_FOUND',
+                  message: 'Doctor not found',
+                },
+              });
+            } else if (doctors.length > 1) {
+              const doctorList = doctors.map(d => d.name).join(', ');
+              return res.json({
+                success: true,
+                data: {
+                  text: `I found multiple doctors: ${doctorList}. Which one would you like to book with?`,
+                  doctors,
+                },
+              });
+            } else {
+              doctorId = doctors[0].doctorId;
+            }
+          }
+          
+          // Check available slots if date is provided but time is not
+          if (doctorId && booking.date && !booking.time) {
+            const availableSlots = await getAvailableSlots(doctorId, booking.date);
+            if (availableSlots.length === 0) {
+              return res.json({
+                success: false,
+                data: {
+                  text: `No available slots on ${booking.date}. Would you like to choose a different date?`,
+                },
+              });
+            }
+            const slotsText = availableSlots.slice(0, 5).join(', ');
+            return res.json({
+              success: true,
+              data: {
+                text: `Available slots on ${booking.date}: ${slotsText}${availableSlots.length > 5 ? ` and ${availableSlots.length - 5} more` : ''}. What time would you like?`,
+                availableSlots,
+              },
+            });
+          }
+          
+          // Book the appointment
+          const result = await bookAppointment(userId, {
+            doctorId,
+            date: booking.date,
+            time: booking.time,
+            duration: booking.duration || 30,
+            notes: booking.notes,
+          });
+          
+          return res.json({
+            success: result.success,
+            data: {
+              text: result.message,
+              appointmentId: result.appointmentId,
+            },
+            error: result.success
+              ? null
+              : {
+                  code: 'BOOKING_FAILED',
+                  message: result.message,
+                },
+          });
+        }
         default: {
           return res.json({
             success: true,
             data: {
-              text: "I can help with appointments right now. Try asking 'What are my appointments today?'",
+              text: "I can help with appointments. Try asking 'What are my appointments today?' or 'Book an appointment with Dr. Smith tomorrow at 2 PM'",
             },
           });
         }

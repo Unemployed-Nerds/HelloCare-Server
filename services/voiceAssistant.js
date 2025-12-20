@@ -105,12 +105,13 @@ You MUST output ONLY valid JSON, no markdown, no code blocks, no explanations, n
 Supported actions:
   - get_patient_appointments: list a patient's appointments with optional filters.
   - cancel_appointment: cancel an appointment by id.
+  - book_appointment: book a new appointment with a doctor.
 
 If information is missing, set needsClarification=true and ask only ONE concise question in followUp.
 
 You MUST return this exact JSON structure:
 {
-  "action": "get_patient_appointments" | "cancel_appointment",
+  "action": "get_patient_appointments" | "cancel_appointment" | "book_appointment",
   "filters": {
     "status": "pending" | "confirmed" | "completed" | "cancelled" | null,
     "date": "YYYY-MM-DD" | null,
@@ -118,6 +119,14 @@ You MUST return this exact JSON structure:
     "endDate": "YYYY-MM-DD" | null
   },
   "appointmentId": "string" | null,
+  "booking": {
+    "doctorName": "string" | null,
+    "doctorId": "string" | null,
+    "date": "YYYY-MM-DD" | null,
+    "time": "HH:mm" | null,
+    "duration": 30,
+    "notes": "string" | null
+  },
   "needsClarification": false,
   "followUp": "string" | null
 }
@@ -125,6 +134,13 @@ You MUST return this exact JSON structure:
 Rules:
 - Do not invent IDs or dates.
 - If cancel is requested without an appointment id, set needsClarification=true and followUp asking for the appointment id.
+- If book_appointment is requested:
+  - Extract doctorName from user input (e.g., "Dr. Smith", "Smith", "doctor smith")
+  - Extract date (resolve today/tomorrow/weekday to ISO date YYYY-MM-DD)
+  - Extract time in HH:mm format (e.g., "2 PM" → "14:00", "10:30 AM" → "10:30")
+  - If doctorName is missing, set needsClarification=true and followUp="Which doctor would you like to book with?"
+  - If date is missing, set needsClarification=true and followUp="What date would you like to book?"
+  - If time is missing, set needsClarification=true and followUp="What time would you like to book?"
 - Prefer specific date if user said today/tomorrow/weekday; resolve to ISO date (YYYY-MM-DD).
 - If user asks for upcoming/next, set startDate=today (YYYY-MM-DD) and leave endDate=null.
 - Output ONLY the JSON object, nothing else. No markdown, no code blocks, no explanations.`;
@@ -163,6 +179,14 @@ Rules:
       action: parsed.action || 'get_patient_appointments',
       filters: parsed.filters || {},
       appointmentId: parsed.appointmentId || null,
+      booking: parsed.booking || {
+        doctorName: null,
+        doctorId: null,
+        date: null,
+        time: null,
+        duration: 30,
+        notes: null,
+      },
       needsClarification: parsed.needsClarification || false,
       followUp: parsed.followUp || null,
     };
@@ -178,12 +202,68 @@ function fallbackIntentInference(text) {
   const lowerText = text.toLowerCase();
   const today = new Date().toISOString().split('T')[0];
   
+  // Check for book intent
+  if (lowerText.includes('book') || lowerText.includes('schedule') || lowerText.includes('make appointment') || lowerText.includes('appointment with')) {
+    const booking = {
+      doctorName: null,
+      doctorId: null,
+      date: null,
+      time: null,
+      duration: 30,
+      notes: null,
+    };
+    
+    // Try to extract doctor name (simple pattern matching)
+    const doctorMatch = lowerText.match(/(?:dr\.?|doctor)\s+([a-z]+)|with\s+([a-z]+)/i);
+    if (doctorMatch) {
+      booking.doctorName = doctorMatch[1] || doctorMatch[2];
+    }
+    
+    // Try to extract date
+    if (lowerText.includes('today')) {
+      booking.date = today;
+    } else if (lowerText.includes('tomorrow')) {
+      const tomorrow = new Date();
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      booking.date = tomorrow.toISOString().split('T')[0];
+    }
+    
+    // Try to extract time (simple patterns)
+    const timeMatch = lowerText.match(/(\d{1,2})\s*(?:am|pm|:(\d{2})\s*(?:am|pm)?)/i);
+    if (timeMatch) {
+      let hour = parseInt(timeMatch[1]);
+      const minute = timeMatch[2] ? parseInt(timeMatch[2]) : 0;
+      const isPM = lowerText.includes('pm') || (hour < 12 && lowerText.includes('p'));
+      if (isPM && hour !== 12) hour += 12;
+      if (!isPM && hour === 12) hour = 0;
+      booking.time = `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
+    }
+    
+    // Determine what's missing
+    const missing = [];
+    if (!booking.doctorName) missing.push('doctor');
+    if (!booking.date) missing.push('date');
+    if (!booking.time) missing.push('time');
+    
+    return {
+      action: 'book_appointment',
+      filters: {},
+      appointmentId: null,
+      booking,
+      needsClarification: missing.length > 0,
+      followUp: missing.length > 0 
+        ? `To book an appointment, I need: ${missing.join(', ')}. ${missing.length === 1 ? 'What' : 'What are'} the ${missing.join(' and ')}?`
+        : null,
+    };
+  }
+  
   // Check for cancel intent
   if (lowerText.includes('cancel') || lowerText.includes('delete') || lowerText.includes('remove')) {
     return {
       action: 'cancel_appointment',
       filters: {},
       appointmentId: null,
+      booking: null,
       needsClarification: true,
       followUp: 'Which appointment would you like to cancel? Please provide the appointment ID.',
     };
@@ -211,6 +291,7 @@ function fallbackIntentInference(text) {
     action: 'get_patient_appointments',
     filters,
     appointmentId: null,
+    booking: null,
     needsClarification: false,
     followUp: null,
   };
@@ -282,11 +363,126 @@ async function cancelAppointment(appointmentId, userId) {
   return { success: true, message: 'Appointment cancelled' };
 }
 
+// Search for doctors by name
+async function searchDoctors(doctorName) {
+  if (!doctorName) return [];
+  
+  const snapshot = await db.collection('doctors').get();
+  const searchLower = doctorName.toLowerCase();
+  
+  const doctors = snapshot.docs
+    .map(doc => {
+      const data = doc.data();
+      return {
+        doctorId: doc.id,
+        name: data.name,
+        specialization: data.specialization,
+        rating: data.rating || 0,
+      };
+    })
+    .filter(doctor => {
+      const nameLower = doctor.name.toLowerCase();
+      return nameLower.includes(searchLower) || 
+             nameLower.includes(searchLower.replace('dr.', '').replace('doctor', '').trim());
+    });
+  
+  return doctors;
+}
+
+// Get available time slots for a doctor on a specific date
+async function getAvailableSlots(doctorId, date) {
+  // Get all appointments for this doctor on this date
+  const appointmentsSnapshot = await db.collection('appointments')
+    .where('doctorId', '==', doctorId)
+    .where('date', '==', date)
+    .where('status', 'in', ['pending', 'confirmed'])
+    .get();
+  
+  const bookedSlots = appointmentsSnapshot.docs.map(doc => doc.data().time);
+  
+  // Generate available slots (9 AM to 5 PM, 30-minute intervals)
+  const availableSlots = [];
+  for (let hour = 9; hour < 17; hour++) {
+    for (let minute = 0; minute < 60; minute += 30) {
+      const time = `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
+      if (!bookedSlots.includes(time)) {
+        availableSlots.push(time);
+      }
+    }
+  }
+  
+  return availableSlots;
+}
+
+// Book an appointment
+async function bookAppointment(userId, booking) {
+  const { doctorId, date, time, duration = 30, notes } = booking;
+  
+  if (!doctorId || !date || !time) {
+    return { success: false, message: 'Missing required booking information' };
+  }
+  
+  // Verify doctor exists
+  const doctorDoc = await db.collection('doctors').doc(doctorId).get();
+  if (!doctorDoc.exists) {
+    return { success: false, message: 'Doctor not found' };
+  }
+  
+  const doctorData = doctorDoc.data();
+  
+  // Check if slot is available
+  const existingAppointments = await db.collection('appointments')
+    .where('doctorId', '==', doctorId)
+    .where('date', '==', date)
+    .where('time', '==', time)
+    .where('status', 'in', ['pending', 'confirmed'])
+    .get();
+  
+  if (!existingAppointments.empty) {
+    return { success: false, message: 'This time slot is already booked. Please choose another time.' };
+  }
+  
+  // Get patient info
+  const patientDoc = await db.collection('users').doc(userId).get();
+  const patientData = patientDoc.data();
+  
+  // Create appointment
+  const appointmentRef = db.collection('appointments').doc();
+  const appointmentId = appointmentRef.id;
+  
+  const appointmentData = {
+    appointmentId,
+    doctorId,
+    doctorName: doctorData.name,
+    doctorSpecialization: doctorData.specialization,
+    patientId: userId,
+    patientName: patientData.name,
+    date,
+    time,
+    duration,
+    status: 'pending',
+    notes: notes || null,
+    doctorNotes: null,
+    createdAt: new Date().toISOString(),
+  };
+  
+  await appointmentRef.set(appointmentData);
+  
+  return {
+    success: true,
+    message: `Appointment booked successfully with ${doctorData.name} on ${date} at ${time}`,
+    appointmentId,
+  };
+}
+
 module.exports = {
   inferIntentFromText,
   fetchPatientAppointments,
   summarizeAppointments,
   cancelAppointment,
+  searchDoctors,
+  getAvailableSlots,
+  bookAppointment,
 };
 
 
