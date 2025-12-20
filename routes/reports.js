@@ -6,7 +6,7 @@ const { db, admin } = require('../config/firebase');
 const { generateUploadUrl, generateDownloadUrl, exportReports } = require('../services/storage');
 const { processDocumentAsync } = require('../services/ocr');
 const { generateQRToken, validateQRToken, generateQRCodeImage, getReportsByQRToken } = require('../services/qr');
-const { generateSummaryForReports } = require('../services/ai');
+const { generateSummaryForReports, invalidateUserCache } = require('../services/ai');
 
 const router = express.Router();
 
@@ -137,6 +137,11 @@ router.post('/', authenticateToken, [
     };
 
     await reportRef.set(reportData);
+
+    // Invalidate AI summary cache for this user (new report added)
+    invalidateUserCache(userId).catch(err => {
+      console.error(`Error invalidating cache for user ${userId}:`, err);
+    });
 
     // Process OCR asynchronously (don't wait for it)
     processDocumentAsync(reportId, fileKey).catch(err => {

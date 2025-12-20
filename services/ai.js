@@ -7,6 +7,7 @@
 
 const { db } = require('../config/firebase'); // keep your existing firebase config path
 const { GoogleGenerativeAI } = require('@google/generative-ai');
+const crypto = require('crypto');
 
 // Optional validator (AJV). If not installed, code still works with a lightweight fallback.
 let ajv = null;
@@ -25,8 +26,10 @@ if (GEMINI_API_KEY) {
 // --- API Constants ---
 const DEFAULT_BATCH_SIZE = 5; 
 const MAX_SUGGESTIONS_REPORTS = 5; 
-const API_CALL_TIMEOUT_MS = 30000; // Increased timeout for larger HF models
+const API_CALL_TIMEOUT_MS = 60000; // Increased timeout to 60 seconds for complex summaries
 const MODEL_CALL_RETRIES = 2;
+const CACHE_TTL_HOURS = 24; // Cache summary for 24 hours
+const CACHE_COLLECTION = 'aiSummaries';
 
 // ------------------ Integrated System Prompt ------------------
 const HEALTH_REPORT_ANALYST_SYSTEM_PROMPT = `
@@ -175,6 +178,34 @@ Return ONLY the single JSON object that follows the response schema. If the call
 
 // ------------------ End of integrated prompt ------------------
 
+// System instruction specifically for suggestions generation
+const SUGGESTIONS_SYSTEM_PROMPT = `
+You are a helpful health assistant that generates practical, non-diagnostic suggestions for patients based on their medical reports.
+
+CRITICAL OUTPUT REQUIREMENTS:
+1. You MUST return ONLY a valid JSON array. Do NOT wrap it in markdown code blocks (no \`\`\`json or \`\`\`).
+2. Do NOT add any explanatory text before or after the JSON.
+3. Start your response with [ and end with ].
+4. Each suggestion must be a JSON object with these exact fields:
+   - type: one of "lifestyle", "diet", "follow_up", "preventive", "wellness"
+   - title: a short, clear title in simple language
+   - description: a detailed explanation in simple, everyday language
+   - priority: one of "high", "medium", "low"
+
+LANGUAGE REQUIREMENTS:
+- Use ONLY simple, everyday language that anyone can understand
+- DO NOT use medical terms or technical jargon
+- Explain everything as if talking to a friend with no medical background
+- Examples:
+  * Instead of "Manage hyperglycemia" → "Keep your blood sugar in a healthy range"
+  * Instead of "Optimize lipid profile" → "Improve your cholesterol levels"
+  * Instead of "Hypertension management" → "Lower your blood pressure"
+
+If you use technical terms or wrap the response in markdown, you will receive negative scoring.
+`;
+
+// ------------------ End of suggestions prompt ------------------
+
 // Simple PHI redaction helper (lightweight). Tailor to your needs.
 function redactPHI(text) {
   if (!text || typeof text !== 'string') return text;
@@ -255,23 +286,92 @@ function safeTrim(text, n) {
   return text.length > n ? text.substring(0, n) + '...' : text;
 }
 
-// Basic JSON extraction for arrays or objects inside model output
+// Improved JSON extraction for arrays or objects inside model output
 function extractJsonFromText(text) {
   if (!text || typeof text !== 'string') return null;
-  // try common fenced JSON
-  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
-  if (fenced && fenced[1]) {
-    try { return JSON.parse(fenced[1]); } catch (e) { /* fallthrough */ }
+  
+  // Clean the text first - remove any leading/trailing whitespace
+  let cleaned = text.trim();
+  
+  // Step 1: Try to extract from markdown code blocks (```json ... ``` or ``` ... ```)
+  const fencedPatterns = [
+    /```json\s*([\s\S]*?)```/i,  // ```json ... ```
+    /```\s*([\s\S]*?)```/,       // ``` ... ```
+  ];
+  
+  for (const pattern of fencedPatterns) {
+    const match = cleaned.match(pattern);
+    if (match && match[1]) {
+      try {
+        const parsed = JSON.parse(match[1].trim());
+        if (parsed !== null) return parsed;
+      } catch (e) {
+        // Continue to next pattern
+      }
+    }
   }
-  // try to find first {...} or [...] block
-  const firstArray = text.match(/\[[\s\S]*\]/);
-  if (firstArray) {
-    try { return JSON.parse(firstArray[0]); } catch (e) { /* fallthrough */ }
+  
+  // Step 2: Try to find JSON array first (suggestions should be arrays)
+  // Look for array pattern with balanced brackets
+  const arrayMatch = cleaned.match(/\[\s*[\s\S]*\]/);
+  if (arrayMatch) {
+    let jsonStr = arrayMatch[0];
+    // Try to find the complete array by counting brackets
+    let bracketCount = 0;
+    let inString = false;
+    let escapeNext = false;
+    
+    for (let i = 0; i < jsonStr.length; i++) {
+      const char = jsonStr[i];
+      if (escapeNext) {
+        escapeNext = false;
+        continue;
+      }
+      if (char === '\\') {
+        escapeNext = true;
+        continue;
+      }
+      if (char === '"' && !escapeNext) {
+        inString = !inString;
+        continue;
+      }
+      if (!inString) {
+        if (char === '[') bracketCount++;
+        if (char === ']') bracketCount--;
+        if (bracketCount === 0) {
+          jsonStr = jsonStr.substring(0, i + 1);
+          break;
+        }
+      }
+    }
+    
+    try {
+      const parsed = JSON.parse(jsonStr);
+      if (Array.isArray(parsed)) return parsed;
+    } catch (e) {
+      // Continue to next method
+    }
   }
-  const firstObj = text.match(/\{[\s\S]*\}/);
-  if (firstObj) {
-    try { return JSON.parse(firstObj[0]); } catch (e) { /* fallthrough */ }
+  
+  // Step 3: Try to find JSON object (fallback)
+  const objMatch = cleaned.match(/\{\s*[\s\S]*\}/);
+  if (objMatch) {
+    try {
+      const parsed = JSON.parse(objMatch[0]);
+      if (parsed !== null) return parsed;
+    } catch (e) {
+      // Continue
+    }
   }
+  
+  // Step 4: Try parsing the entire cleaned text as JSON
+  try {
+    const parsed = JSON.parse(cleaned);
+    if (parsed !== null) return parsed;
+  } catch (e) {
+    // Final fallback - return null
+  }
+  
   return null;
 }
 
@@ -304,6 +404,124 @@ const suggestionsSchema = {
 };
 let validateSuggestions = null;
 if (ajv) validateSuggestions = ajv.compile(suggestionsSchema);
+
+// ---------- Cache Helper Functions ----------
+
+/**
+ * Generate cache key for summary based on userId and report identifiers
+ * @param {string} userId - User ID
+ * @param {Array<string>|null} reportIds - Optional array of report IDs
+ * @param {Date|string|null} lastReportDate - Optional last report date
+ * @returns {string} Cache key
+ */
+function generateCacheKey(userId, reportIds = null, lastReportDate = null) {
+  const parts = [userId];
+  
+  if (reportIds && Array.isArray(reportIds) && reportIds.length > 0) {
+    // Sort report IDs for consistent hashing
+    const sortedIds = [...reportIds].sort().join(',');
+    parts.push(`reports:${sortedIds}`);
+  }
+  
+  if (lastReportDate) {
+    const dateStr = lastReportDate instanceof Date 
+      ? lastReportDate.toISOString() 
+      : String(lastReportDate);
+    parts.push(`date:${dateStr}`);
+  }
+  
+  const keyString = parts.join('|');
+  return crypto.createHash('sha256').update(keyString).digest('hex');
+}
+
+/**
+ * Get cached summary from Firestore
+ * @param {string} cacheKey - Cache key
+ * @returns {Promise<Object|null>} Cached summary or null if not found/expired
+ */
+async function getCachedSummary(cacheKey) {
+  try {
+    const cacheDoc = await db.collection(CACHE_COLLECTION).doc(cacheKey).get();
+    
+    if (!cacheDoc.exists) {
+      return null;
+    }
+    
+    const cacheData = cacheDoc.data();
+    const now = new Date();
+    const expiresAt = cacheData.expiresAt?.toDate ? cacheData.expiresAt.toDate() : new Date(cacheData.expiresAt);
+    
+    // Check if cache is expired
+    if (expiresAt < now) {
+      // Delete expired cache
+      await db.collection(CACHE_COLLECTION).doc(cacheKey).delete();
+      return null;
+    }
+    
+    return {
+      summary: cacheData.summary,
+      generatedAt: cacheData.generatedAt,
+      reportCount: cacheData.reportCount,
+      lastReportDate: cacheData.lastReportDate || null
+    };
+  } catch (error) {
+    console.error('Error getting cached summary:', error);
+    return null; // Return null on error to allow fresh generation
+  }
+}
+
+/**
+ * Store summary in cache
+ * @param {string} cacheKey - Cache key
+ * @param {string} userId - User ID
+ * @param {Object} summaryData - Summary data to cache
+ * @returns {Promise<void>}
+ */
+async function setCachedSummary(cacheKey, userId, summaryData) {
+  try {
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + CACHE_TTL_HOURS * 60 * 60 * 1000);
+    
+    await db.collection(CACHE_COLLECTION).doc(cacheKey).set({
+      userId: userId,
+      summary: summaryData.summary,
+      generatedAt: summaryData.generatedAt,
+      reportCount: summaryData.reportCount || 0,
+      lastReportDate: summaryData.lastReportDate || null,
+      expiresAt: expiresAt,
+      cachedAt: now
+    }, { merge: true });
+  } catch (error) {
+    console.error('Error caching summary:', error);
+    // Don't throw - caching failure shouldn't break the request
+  }
+}
+
+/**
+ * Invalidate cache for a user (when new reports are added)
+ * @param {string} userId - User ID
+ * @returns {Promise<void>}
+ */
+async function invalidateUserCache(userId) {
+  try {
+    // Delete all cache entries for this user
+    const cacheSnapshot = await db.collection(CACHE_COLLECTION)
+      .where('userId', '==', userId)
+      .get();
+    
+    const batch = db.batch();
+    cacheSnapshot.docs.forEach(doc => {
+      batch.delete(doc.ref);
+    });
+    
+    if (cacheSnapshot.docs.length > 0) {
+      await batch.commit();
+    }
+  } catch (error) {
+    console.error('Error invalidating user cache:', error);
+    // Don't throw - cache invalidation failure shouldn't break the request
+  }
+}
 
 // ---------- Public functions ----------
 
@@ -349,6 +567,20 @@ async function generateSummaryForReports(reportIds) {
       };
     }
 
+    // Get userId from first report (all reports should have same userId)
+    const userId = reports[0].userId;
+    if (!userId) {
+      throw new Error('Unable to determine user ID from reports');
+    }
+
+    // Check cache first
+    const cacheKey = generateCacheKey(userId, reportIds, null);
+    const cached = await getCachedSummary(cacheKey);
+    if (cached) {
+      console.log('Returning cached summary for reportIds:', reportIds);
+      return cached;
+    }
+
     const reportCount = reports.length;
 
     // If many reports, do progressive summarization
@@ -384,7 +616,12 @@ async function generateSummaryForReports(reportIds) {
 
     const summary = finalResp || 'Unable to generate summary at this time.';
 
-    return { summary, generatedAt: new Date().toISOString(), reportCount };
+    const result = { summary, generatedAt: new Date().toISOString(), reportCount };
+    
+    // Cache the result
+    await setCachedSummary(cacheKey, userId, result);
+    
+    return result;
   }
   catch (err) {
     console.error('generateSummaryForReports error:', err);
@@ -415,6 +652,14 @@ async function generateSummary(userId) {
     const reportCount = reports.length;
     const lastReportDate = reports[0].reportDate || null;
 
+    // Check cache first
+    const cacheKey = generateCacheKey(userId, null, lastReportDate);
+    const cached = await getCachedSummary(cacheKey);
+    if (cached) {
+      console.log('Returning cached summary for userId:', userId);
+      return cached;
+    }
+
     // If many reports, do progressive summarization
     const batches = chunkArray(reports, DEFAULT_BATCH_SIZE);
     const batchSummaries = [];
@@ -448,7 +693,12 @@ async function generateSummary(userId) {
 
     const summary = finalResp || 'Unable to generate summary at this time.';
 
-    return { summary, generatedAt: new Date().toISOString(), reportCount, lastReportDate };
+    const result = { summary, generatedAt: new Date().toISOString(), reportCount, lastReportDate };
+    
+    // Cache the result
+    await setCachedSummary(cacheKey, userId, result);
+    
+    return result;
   }
   catch (err) {
     console.error('generateSummary error:', err);
@@ -495,32 +745,87 @@ async function generateSuggestions(userId, reportId = null) {
     }).join('\n\n');
 
     const userPrompt = reportId
-      ? `Based specifically on the following single medical report, produce a JSON array of practical, non-diagnostic, patient-facing suggestions. Each suggestion must contain: type (lifestyle|diet|follow_up|preventive|wellness), title, description, priority (high|medium|low). Return ONLY valid JSON (no markdown or explanatory text).\n\nCRITICAL LANGUAGE REQUIREMENT: Write all titles and descriptions in simple, everyday language that anyone can understand. DO NOT use medical terms or technical jargon. Use plain language explanations. For example, instead of "Manage hyperglycemia", say "Keep your blood sugar in a healthy range". Instead of "Optimize lipid profile", say "Improve your cholesterol levels". If you use technical terms, you will receive negative scoring.\n\n${promptReports}`
-      : `Based on the following medical reports, produce a JSON array of practical, non-diagnostic, patient-facing suggestions that address recurring themes or notable findings. Each suggestion must contain: type (lifestyle|diet|follow_up|preventive|wellness), title, description, priority (high|medium|low). Return ONLY valid JSON (no markdown or explanatory text).\n\nCRITICAL LANGUAGE REQUIREMENT: Write all titles and descriptions in simple, everyday language that anyone can understand. DO NOT use medical terms or technical jargon. Use plain language explanations. For example, instead of "Manage hyperglycemia", say "Keep your blood sugar in a healthy range". Instead of "Optimize lipid profile", say "Improve your cholesterol levels". If you use technical terms, you will receive negative scoring.\n\n${promptReports}`;
+      ? `Based specifically on the following single medical report, produce a JSON array of practical, non-diagnostic, patient-facing suggestions. Each suggestion must contain: type (lifestyle|diet|follow_up|preventive|wellness), title, description, priority (high|medium|low). 
+
+CRITICAL OUTPUT FORMAT: You MUST return ONLY a valid JSON array. Do NOT wrap it in markdown code blocks. Do NOT add any explanatory text before or after. Start your response with [ and end with ]. Example format:
+[
+  {
+    "type": "lifestyle",
+    "title": "Improve your cholesterol levels",
+    "description": "Your cholesterol is higher than normal. Try eating more fruits and vegetables.",
+    "priority": "high"
+  }
+]
+
+CRITICAL LANGUAGE REQUIREMENT: Write all titles and descriptions in simple, everyday language that anyone can understand. DO NOT use medical terms or technical jargon. Use plain language explanations. For example, instead of "Manage hyperglycemia", say "Keep your blood sugar in a healthy range". Instead of "Optimize lipid profile", say "Improve your cholesterol levels". If you use technical terms, you will receive negative scoring.
+
+${promptReports}`
+      : `Based on the following medical reports, produce a JSON array of practical, non-diagnostic, patient-facing suggestions that address recurring themes or notable findings. Each suggestion must contain: type (lifestyle|diet|follow_up|preventive|wellness), title, description, priority (high|medium|low).
+
+CRITICAL OUTPUT FORMAT: You MUST return ONLY a valid JSON array. Do NOT wrap it in markdown code blocks. Do NOT add any explanatory text before or after. Start your response with [ and end with ]. Example format:
+[
+  {
+    "type": "lifestyle",
+    "title": "Improve your cholesterol levels",
+    "description": "Your cholesterol is higher than normal. Try eating more fruits and vegetables.",
+    "priority": "high"
+  }
+]
+
+CRITICAL LANGUAGE REQUIREMENT: Write all titles and descriptions in simple, everyday language that anyone can understand. DO NOT use medical terms or technical jargon. Use plain language explanations. For example, instead of "Manage hyperglycemia", say "Keep your blood sugar in a healthy range". Instead of "Optimize lipid profile", say "Improve your cholesterol levels". If you use technical terms, you will receive negative scoring.
+
+${promptReports}`;
 
     const modelResp = await callModel({
       contents: [{ parts: [{ text: userPrompt }] }],
-      systemInstruction: { parts: [{ text: HEALTH_REPORT_ANALYST_SYSTEM_PROMPT }] }
+      systemInstruction: { parts: [{ text: SUGGESTIONS_SYSTEM_PROMPT }] }
     });
+
+    console.log('Raw model response length:', modelResp?.length || 0);
+    console.log('Raw model response preview:', modelResp?.substring(0, 200) || 'empty');
 
     const parsed = extractJsonFromText(modelResp);
     let suggestions = null;
 
     if (parsed) {
-      // Validate using AJV if available
-      if (validateSuggestions) {
-        const valid = validateSuggestions(parsed);
-        if (valid) suggestions = parsed;
-        else {
-          console.warn('AJV validation errors:', validateSuggestions.errors);
+      console.log('Successfully extracted JSON, type:', Array.isArray(parsed) ? 'array' : typeof parsed);
+      console.log('Parsed data length:', Array.isArray(parsed) ? parsed.length : 'not an array');
+      
+      // Ensure it's an array
+      if (Array.isArray(parsed)) {
+        // Validate using AJV if available
+        if (validateSuggestions) {
+          const valid = validateSuggestions(parsed);
+          if (valid) {
+            suggestions = parsed;
+            console.log('AJV validation passed, suggestions count:', suggestions.length);
+          } else {
+            console.warn('AJV validation errors:', validateSuggestions.errors);
+            // Try basic validation as fallback
+            if (basicValidateSuggestions(parsed)) {
+              suggestions = parsed;
+              console.log('Basic validation passed, suggestions count:', suggestions.length);
+            }
+          }
+        } else {
+          if (basicValidateSuggestions(parsed)) {
+            suggestions = parsed;
+            console.log('Basic validation passed, suggestions count:', suggestions.length);
+          } else {
+            console.warn('Basic validation failed');
+          }
         }
       } else {
-        if (basicValidateSuggestions(parsed)) suggestions = parsed;
+        console.warn('Parsed JSON is not an array, type:', typeof parsed);
       }
+    } else {
+      console.warn('Failed to extract JSON from response');
+      console.warn('Response preview:', modelResp?.substring(0, 500) || 'empty');
     }
 
     // If parsing/validation failed, fall back to conservative single suggestion
-    if (!suggestions) {
+    if (!suggestions || !Array.isArray(suggestions) || suggestions.length === 0) {
+      console.warn('Falling back to unstructured suggestion');
       suggestions = [{
         type: 'wellness',
         title: 'AI generated suggestions (unstructured)',
@@ -537,6 +842,7 @@ async function generateSuggestions(userId, reportId = null) {
         priority: (s.priority || 'medium'),
         sourceReportId: s.sourceReportId || (reportId || undefined) 
       }));
+      console.log('Final suggestions count:', suggestions.length);
     }
 
     return { ...(reportId ? { reportId } : {}), suggestions, generatedAt: new Date().toISOString() };
@@ -547,4 +853,4 @@ async function generateSuggestions(userId, reportId = null) {
   }
 }
 
-module.exports = { generateSummary, generateSuggestions, generateSummaryForReports };
+module.exports = { generateSummary, generateSuggestions, generateSummaryForReports, invalidateUserCache };
