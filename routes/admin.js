@@ -3,6 +3,7 @@ const { query, body, validationResult } = require('express-validator');
 const { authenticateToken } = require('../middleware/auth');
 const { asyncHandler } = require('../middleware/errorHandler');
 const { db } = require('../config/firebase');
+const { logAdminAction } = require('../services/logger');
 
 const router = express.Router();
 
@@ -78,17 +79,27 @@ router.get('/patients', authenticateToken, requireAdmin, [
 router.get('/appointments', authenticateToken, requireAdmin, [
     query('limit').optional().isInt({ min: 1, max: 100 }),
     query('offset').optional().isInt({ min: 0 }),
-    query('status').optional().isIn(['pending', 'confirmed', 'completed', 'cancelled'])
+    query('status').optional().isIn(['pending', 'confirmed', 'completed', 'cancelled']),
+    query('patientId').optional().trim(),
+    query('doctorId').optional().trim()
 ], asyncHandler(async (req, res) => {
     const limit = parseInt(req.query.limit) || 50;
     const offset = parseInt(req.query.offset) || 0;
-    const { status } = req.query;
+    const { status, patientId, doctorId } = req.query;
 
     try {
         let query = db.collection('appointments');
 
         if (status) {
             query = query.where('status', '==', status);
+        }
+
+        if (patientId) {
+            query = query.where('patientId', '==', patientId);
+        }
+
+        if (doctorId) {
+            query = query.where('doctorId', '==', doctorId);
         }
 
         query = query.orderBy('date', 'desc').limit(limit).offset(offset);
@@ -158,6 +169,41 @@ router.get('/stats', authenticateToken, requireAdmin, asyncHandler(async (req, r
 }));
 
 /**
+ * Get Admin Logs
+ * GET /v1/admin/logs
+ */
+router.get('/logs', authenticateToken, requireAdmin, [
+    query('limit').optional().isInt({ min: 1, max: 100 }),
+    query('offset').optional().isInt({ min: 0 })
+], asyncHandler(async (req, res) => {
+    const limit = parseInt(req.query.limit) || 50;
+    const offset = parseInt(req.query.offset) || 0;
+
+    try {
+        const snapshot = await db.collection('admin_logs')
+            .orderBy('timestamp', 'desc')
+            .limit(limit)
+            .offset(offset)
+            .get();
+
+        const logs = snapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data()
+        }));
+
+        res.json({
+            success: true,
+            data: {
+                logs
+            }
+        });
+    } catch (error) {
+        console.error('Error fetching admin logs:', error);
+        throw error;
+    }
+}));
+
+/**
  * Update Appointment Status
  * PUT /v1/admin/appointments/:id/status
  */
@@ -185,6 +231,20 @@ router.put('/appointments/:id/status', authenticateToken, requireAdmin, [
             status,
             updatedAt: new Date().toISOString()
         });
+
+        // Log the action
+        const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+
+        // Fetch current user details to get name (assuming req.user only has uid)
+        // Optimization: In a real app we might cache this or store name in token
+        const adminDoc = await db.collection('users').doc(req.user.uid).get();
+        const adminName = adminDoc.exists ? adminDoc.data().name : 'Unknown Admin';
+
+        logAdminAction(req.user.uid, adminName, 'UPDATE_APPOINTMENT_STATUS', {
+            appointmentId: id,
+            newStatus: status,
+            previousStatus: doc.data().status
+        }, ip);
 
         res.json({
             success: true,

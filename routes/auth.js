@@ -1027,6 +1027,12 @@ router.post('/admin/login', [
       throw tokenError;
     }
 
+    // Log the login action
+    const { logAdminAction } = require('../services/logger');
+    const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+    // We don't await this to avoid blocking the response
+    logAdminAction(userId, userData.name, 'LOGIN', { success: true }, ip);
+
     res.json({
       success: true,
       data: {
