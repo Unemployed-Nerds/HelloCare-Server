@@ -58,6 +58,7 @@ const aiRoutes = require('./routes/ai');
 const doctorsRoutes = require('./routes/doctors');
 const appointmentsRoutes = require('./routes/appointments');
 const paymentRoutes = require('./routes/payment');
+const adminRoutes = require('./routes/admin');
 
 app.use('/v1/auth', authRoutes);
 app.use('/v1/reports', reportsRoutes);
@@ -65,6 +66,7 @@ app.use('/v1/ai', aiRoutes);
 app.use('/v1/doctors', doctorsRoutes);
 app.use('/v1/appointments', appointmentsRoutes);
 app.use('/v1/payment', paymentRoutes);
+app.use('/v1/admin', adminRoutes);
 
 // 404 handler
 app.use((req, res) => {
