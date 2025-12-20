@@ -171,6 +171,7 @@ router.get('/stats', authenticateToken, requireAdmin, asyncHandler(async (req, r
 /**
  * Get Admin Logs
  * GET /v1/admin/logs
+ * Retrieves paginated audit logs for admin activities
  */
 router.get('/logs', authenticateToken, requireAdmin, [
     query('limit').optional().isInt({ min: 1, max: 100 }),
