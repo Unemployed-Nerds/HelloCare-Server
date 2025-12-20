@@ -386,9 +386,11 @@ router.put('/:appointmentId/status', authenticateToken, [
       updatedAt: new Date().toISOString()
     });
 
-    // LOG ACTION
+    // LOG ACTION - Fetch user name and role for proper logging
+    const userDoc = await db.collection('users').doc(userId).get();
+    const userData = userDoc.exists ? userDoc.data() : { name: 'Unknown User', role: 'unknown' };
     const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
-    logUserAction(userId, 'User', 'unknown', 'UPDATE_APPOINTMENT_STATUS', { appointmentId, status }, ip);
+    logUserAction(userId, userData.name, userData.role, 'UPDATE_APPOINTMENT_STATUS', { appointmentId, status }, ip);
 
     res.json({
       success: true,

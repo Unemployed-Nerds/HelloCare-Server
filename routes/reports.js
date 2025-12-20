@@ -53,9 +53,11 @@ router.post('/upload-url', authenticateToken, [
   try {
     const result = await generateUploadUrl(fileKey, contentType);
 
-    // LOG ACTION
+    // LOG ACTION - Fetch user name for proper logging
+    const userDoc = await db.collection('users').doc(userId).get();
+    const userName = userDoc.exists ? userDoc.data().name : 'Unknown User';
     const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
-    logUserAction(userId, 'User', 'patient', 'INITIATE_UPLOAD', { fileName, fileType }, ip);
+    logUserAction(userId, userName, 'patient', 'INITIATE_UPLOAD', { fileName, fileType }, ip);
 
     res.json({
       success: true,
@@ -154,9 +156,11 @@ router.post('/', authenticateToken, [
       console.error(`Error processing OCR for report ${reportId}:`, err);
     });
 
-    // LOG ACTION
+    // LOG ACTION - Fetch user name for proper logging
+    const userDoc = await db.collection('users').doc(userId).get();
+    const userName = userDoc.exists ? userDoc.data().name : 'Unknown User';
     const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
-    logUserAction(userId, 'User', 'patient', 'SUBMIT_REPORT', { reportId, fileName, category }, ip);
+    logUserAction(userId, userName, 'patient', 'SUBMIT_REPORT', { reportId, fileName, category }, ip);
 
     res.status(201).json({
       success: true,
@@ -301,9 +305,11 @@ router.get('/:reportId', authenticateToken, asyncHandler(async (req, res) => {
       });
     }
 
-    // LOG ACTION
+    // LOG ACTION - Fetch user name for proper logging
+    const userDoc = await db.collection('users').doc(userId).get();
+    const userName = userDoc.exists ? userDoc.data().name : 'Unknown User';
     const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
-    logUserAction(userId, 'User', 'patient', 'VIEW_REPORT', { reportId, title: reportData.title }, ip);
+    logUserAction(userId, userName, 'patient', 'VIEW_REPORT', { reportId, title: reportData.title }, ip);
 
     res.json({
       success: true,
@@ -355,9 +361,11 @@ router.get('/:reportId/download-url', authenticateToken, asyncHandler(async (req
     try {
       const result = await generateDownloadUrl(reportData.fileKey);
 
-      // LOG ACTION
+      // LOG ACTION - Fetch user name for proper logging
+      const userDoc = await db.collection('users').doc(userId).get();
+      const userName = userDoc.exists ? userDoc.data().name : 'Unknown User';
       const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
-      logUserAction(userId, 'User', 'patient', 'DOWNLOAD_REPORT', { reportId, params: req.params }, ip);
+      logUserAction(userId, userName, 'patient', 'DOWNLOAD_REPORT', { reportId, params: req.params }, ip);
 
       res.json({
         success: true,
@@ -645,9 +653,11 @@ router.delete('/:reportId', authenticateToken, asyncHandler(async (req, res) => 
       console.error(`Error invalidating cache for user ${userId}:`, err);
     });
 
-    // LOG ACTION
+    // LOG ACTION - Fetch user name for proper logging
+    const userDoc = await db.collection('users').doc(userId).get();
+    const userName = userDoc.exists ? userDoc.data().name : 'Unknown User';
     const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
-    logUserAction(userId, 'User', 'patient', 'DELETE_REPORT', { reportId, title: reportData.title }, ip);
+    logUserAction(userId, userName, 'patient', 'DELETE_REPORT', { reportId, title: reportData.title }, ip);
 
     res.json({
       success: true,
