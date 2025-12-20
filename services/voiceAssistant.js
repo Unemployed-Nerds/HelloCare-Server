@@ -1,13 +1,13 @@
-const OpenAI = require('openai');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { db } = require('../config/firebase');
 
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-const MODEL_NAME = 'gpt-4o-mini';
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+const MODEL_NAME = 'gemini-2.5-flash';
 
 // Minimal singleton client
-let openai = null;
-if (OPENAI_API_KEY) {
-  openai = new OpenAI({ apiKey: OPENAI_API_KEY });
+let genAI = null;
+if (GEMINI_API_KEY) {
+  genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 }
 
 // Extract JSON object from text (handles markdown code blocks, extra text, etc.)
@@ -88,8 +88,8 @@ function extractJsonFromText(text) {
 
 // Parse user text into an intent for appointments
 async function inferIntentFromText(text, context = [], lastAction = null) {
-  if (!openai) {
-    throw new Error('OpenAI client not initialized. Set OPENAI_API_KEY.');
+  if (!genAI) {
+    throw new Error('Gemini client not initialized. Set GEMINI_API_KEY.');
   }
 
   // Build conversation context string (last 6 messages)
@@ -100,7 +100,7 @@ async function inferIntentFromText(text, context = [], lastAction = null) {
         .join('\n')
     : '';
   
-  const system = `You are an intent classifier for a healthcare appointments assistant.
+  const systemPrompt = `You are an intent classifier for a healthcare appointments assistant.
 You MUST output ONLY valid JSON, no markdown, no code blocks, no explanations, no prose, no text before or after.
 
 Supported actions:
@@ -166,34 +166,25 @@ Rules:
 - For get_reports: extract filters from user query (category, date range, search term).
 - Output ONLY the JSON object, nothing else. No markdown, no code blocks, no explanations.`;
 
-  const messages = [
-    {
-      role: 'system',
-      content: system
-    },
-    {
-      role: 'user',
-      content: `Previous context:
+  const userPrompt = `Previous context:
 ${contextString || '(no prior messages)'}
 
 Previous action (if any): ${lastAction || 'unknown'}
 
 User: ${text}
-Assistant:`
-    }
-  ];
+
+Please analyze the user's intent and return ONLY the JSON object as specified.`;
+
+  // Combine system prompt with user prompt for Gemini
+  const fullPrompt = `${systemPrompt}\n\n${userPrompt}`;
 
   try {
-    const completion = await openai.chat.completions.create({
-      model: MODEL_NAME,
-      messages: messages,
-      response_format: { type: 'json_object' },
-      temperature: 0.3,
-    });
+    const model = genAI.getGenerativeModel({ model: MODEL_NAME });
+    const result = await model.generateContent(fullPrompt);
+    const response = await result.response;
+    const content = response.text();
     
-    const content = completion.choices[0].message.content;
-    
-    console.log('OpenAI raw response:', content.substring(0, 500)); // Log first 500 chars for debugging
+    console.log('Gemini raw response:', content.substring(0, 500)); // Log first 500 chars for debugging
     
     // Try direct parse first
     let parsed;
@@ -674,8 +665,8 @@ function getNavigationRoute(text) {
 // Generate humanized, context-aware response using LLM
 async function generateHumanizedResponse(userQuery, data, action, context = []) {
   try {
-    if (!openai) {
-      console.warn('OpenAI API not configured, using fallback summary');
+    if (!genAI) {
+      console.warn('Gemini API not configured, using fallback summary');
       return fallbackSummary(data, action);
     }
     
@@ -747,20 +738,10 @@ Generate a natural, conversational response that:
 
 Response (just the text, no quotes or explanations):`;
 
-    const messages = [
-      {
-        role: 'system',
-        content: prompt
-      }
-    ];
-
-    const completion = await openai.chat.completions.create({
-      model: MODEL_NAME,
-      messages: messages,
-      temperature: 0.7,
-    });
-    
-    const response = completion.choices[0].message.content;
+    const model = genAI.getGenerativeModel({ model: MODEL_NAME });
+    const result = await model.generateContent(prompt);
+    const geminiResponse = await result.response;
+    const response = geminiResponse.text();
     
     return response.trim().replace(/^["']|["']$/g, ''); // Remove surrounding quotes if any
   } catch (error) {

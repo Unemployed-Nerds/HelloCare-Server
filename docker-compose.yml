@@ -21,7 +21,6 @@ services:
       - S3_BUCKET_NAME=${S3_BUCKET_NAME}
       # AI Configuration
       - GEMINI_API_KEY=${GEMINI_API_KEY}
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
       # QR Configuration (optional)
       - QR_SECRET_KEY=${QR_SECRET_KEY}
       # CORS Configuration
