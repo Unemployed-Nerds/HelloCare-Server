@@ -16,14 +16,14 @@ Production-ready Node.js API server built with Express.js that provides authenti
 - **Doctor Management**: Doctor profiles, availability, and scheduling
 - **Payment Processing**: Mock payment integration (ready for real gateway)
 - **File Storage**: AWS S3 integration for secure file storage
-- **OCR Processing**: AWS Textract for text extraction from medical documents
+- **OCR Processing**: Google Cloud Vision API for text extraction from medical documents
 
 ## Prerequisites
 
 - Node.js >= 18.0.0
 - Firebase project with Firestore enabled
-- AWS account with S3 and Textract access
-- Google Cloud account with Gemini API access (optional but recommended)
+- AWS account with S3 access
+- Google Cloud account with Vision API and Gemini API access (same project as Firebase)
 
 ## Setup Instructions
 
@@ -96,23 +96,32 @@ Production-ready Node.js API server built with Express.js that provides authenti
 
 2. **Attach Policies**:
    - Click "Attach existing policies directly"
-   - Attach the following policies:
+   - Attach the following policy:
      - `AmazonS3FullAccess` (or create custom policy with only needed permissions)
-     - `AmazonTextractFullAccess` (or create custom policy)
    - Click "Next" and complete user creation
 
 3. **Save Credentials**:
    - Copy the Access Key ID and Secret Access Key
    - Save them securely - you'll need them for environment variables
 
-#### Enable AWS Textract
+### 3. Google Cloud Vision API Setup
 
-1. **Access Textract**:
-   - Textract is available in most AWS regions
-   - Ensure you're using a region where Textract is available (e.g., `us-east-1`, `us-west-2`, `eu-west-1`)
-   - The IAM user created above already has Textract access
+1. **Enable Cloud Vision API**:
+   - Go to [Google Cloud Console](https://console.cloud.google.com/)
+   - Select your Firebase project (same project ID)
+   - Navigate to "APIs & Services" > "Library"
+   - Search for "Cloud Vision API"
+   - Click "Enable"
 
-### 3. Google Gemini API Setup
+2. **Verify Service Account Permissions**:
+   - Go to "IAM & Admin" > "Service Accounts"
+   - Find your Firebase service account (usually `firebase-adminsdk-xxxxx@project-id.iam.gserviceaccount.com`)
+   - Ensure it has "Cloud Vision API User" role (or "Editor" role which includes it)
+   - If not, click "Edit" and add the "Cloud Vision API User" role
+
+**Note**: The same Firebase service account credentials used for Firebase Admin SDK will be used for Google Cloud Vision API. No additional API keys or credentials are needed.
+
+### 4. Google Gemini API Setup
 
 1. **Get API Key**:
    - Go to [Google AI Studio](https://aistudio.google.com/app/apikey)
@@ -121,7 +130,7 @@ Production-ready Node.js API server built with Express.js that provides authenti
    - Copy the API key
    - **Note**: API keys are free to use with usage limits. For production, consider setting up billing.
 
-### 4. Environment Configuration
+### 5. Environment Configuration
 
 1. **Copy Environment Template**:
    ```bash
@@ -148,9 +157,6 @@ Production-ready Node.js API server built with Express.js that provides authenti
 
    # S3 Configuration
    S3_BUCKET_NAME=hellocare-reports
-
-   # AWS Textract Configuration (optional, defaults to AWS_REGION)
-   TEXTRACT_REGION=us-east-1
 
    # Google Gemini API
    GEMINI_API_KEY=your_gemini_api_key
@@ -271,7 +277,6 @@ For detailed API documentation, see `API_DOCUMENTATION.md` in the project root.
 | `AWS_SECRET_ACCESS_KEY` | AWS secret access key | Yes | - |
 | `AWS_REGION` | AWS region | Yes | - |
 | `S3_BUCKET_NAME` | S3 bucket name | Yes | - |
-| `TEXTRACT_REGION` | AWS Textract region | No | `AWS_REGION` |
 | `GEMINI_API_KEY` | Google Gemini API key | Yes | - |
 | `CORS_ORIGIN` | CORS allowed origins (comma-separated) | No | `*` |
 
@@ -314,9 +319,15 @@ HelloCare-Server/
 - Check that authentication is enabled
 
 ### AWS Issues
-- Verify IAM user has correct permissions (S3 and Textract)
+- Verify IAM user has correct permissions (S3)
 - Check that S3 bucket exists and is accessible
 - Ensure AWS region is correct
+
+### Google Cloud Vision API Issues
+- Ensure Cloud Vision API is enabled in Google Cloud Console
+- Verify Firebase service account has "Cloud Vision API User" role
+- Check that you're using the same Google Cloud project as Firebase
+- Verify billing is enabled (required for Vision API usage)
 
 ### Gemini API Issues
 - Verify API key is correct

@@ -1,21 +1,54 @@
-const { TextractClient, DetectDocumentTextCommand } = require('@aws-sdk/client-textract');
+const vision = require('@google-cloud/vision');
 const { getFileStream } = require('./storage');
+const admin = require('firebase-admin');
+const path = require('path');
+const fs = require('fs');
 
-// Initialize Textract client
-// Uses AWS SDK default credential provider chain
-const textractClient = new TextractClient({
-  region: process.env.TEXTRACT_REGION || process.env.AWS_REGION || 'us-east-1'
-  // If credentials are not provided, SDK will use default credential provider chain
-  // To explicitly use credentials, uncomment below:
-  // credentials: process.env.AWS_ACCESS_KEY_ID ? {
-  //   accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-  //   secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
-  //   ...(process.env.AWS_SESSION_TOKEN && { sessionToken: process.env.AWS_SESSION_TOKEN })
-  // } : undefined
-});
+// Initialize Vision client with Firebase service account credentials
+let visionClient = null;
+
+function getVisionClient() {
+  if (visionClient) {
+    return visionClient;
+  }
+
+  try {
+    let credentials;
+    
+    // Get credentials using the same logic as Firebase config
+    if (process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
+      credentials = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
+    } else if (process.env.FIREBASE_SERVICE_ACCOUNT_PATH) {
+      const serviceAccountPath = path.resolve(process.env.FIREBASE_SERVICE_ACCOUNT_PATH);
+      if (fs.existsSync(serviceAccountPath)) {
+        credentials = require(serviceAccountPath);
+      } else {
+        throw new Error(`Firebase service account file not found at: ${serviceAccountPath}`);
+      }
+    } else {
+      const defaultPath = path.resolve(__dirname, '../firebase-service-account.json');
+      if (fs.existsSync(defaultPath)) {
+        credentials = require(defaultPath);
+      } else {
+        throw new Error('Firebase service account not configured. Set FIREBASE_SERVICE_ACCOUNT_PATH or FIREBASE_SERVICE_ACCOUNT_JSON environment variable.');
+      }
+    }
+
+    // Initialize Vision client with credentials
+    visionClient = new vision.ImageAnnotatorClient({
+      credentials: credentials
+    });
+
+    console.log('Google Cloud Vision API client initialized successfully');
+    return visionClient;
+  } catch (error) {
+    console.error('Error initializing Vision client:', error.message);
+    throw error;
+  }
+}
 
 /**
- * Extract text from a document using AWS Textract
+ * Extract text from a document using Google Cloud Vision API
  * @param {string} fileKey - Firebase Storage object path
  * @returns {Promise<string>} - Extracted text content
  */
@@ -31,29 +64,27 @@ async function extractTextFromDocument(fileKey) {
     }
     const fileBuffer = Buffer.concat(chunks);
 
-    // Detect document text using Textract
-    const command = new DetectDocumentTextCommand({
-      Document: {
-        Bytes: fileBuffer
-      }
+    // Get Vision client
+    const client = getVisionClient();
+
+    // Detect text using Vision API
+    // Use documentTextDetection for better results with documents/PDFs
+    const [result] = await client.documentTextDetection({
+      image: { content: fileBuffer }
     });
 
-    const response = await textractClient.send(command);
-
-    // Extract text from blocks
+    // Extract text from response
     let extractedText = '';
-    if (response.Blocks) {
-      // Filter only LINE and WORD blocks with text
-      const lines = response.Blocks
-        .filter(block => block.BlockType === 'LINE' && block.Text)
-        .map(block => block.Text);
-
-      extractedText = lines.join('\n');
+    if (result.fullTextAnnotation && result.fullTextAnnotation.text) {
+      extractedText = result.fullTextAnnotation.text;
+    } else if (result.textAnnotations && result.textAnnotations.length > 0) {
+      // Fallback to textAnnotations if fullTextAnnotation is not available
+      extractedText = result.textAnnotations[0].description || '';
     }
 
     return extractedText || 'No text could be extracted from the document.';
   } catch (error) {
-    console.error('Error extracting text with Textract:', error);
+    console.error('Error extracting text with Google Cloud Vision API:', error);
 
     // Return error message instead of throwing to allow report creation to continue
     return `Error extracting text: ${error.message}`;
@@ -99,4 +130,3 @@ module.exports = {
   extractTextFromDocument,
   processDocumentAsync
 };
-

@@ -19,7 +19,6 @@ services:
       - AWS_SESSION_TOKEN=${AWS_SESSION_TOKEN}
       - AWS_REGION=${AWS_REGION}
       - S3_BUCKET_NAME=${S3_BUCKET_NAME}
-      - TEXTRACT_REGION=${TEXTRACT_REGION}
       # AI Configuration
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       # QR Configuration (optional)
