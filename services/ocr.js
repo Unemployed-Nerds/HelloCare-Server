@@ -1,57 +1,28 @@
 const { TextractClient, DetectDocumentTextCommand } = require('@aws-sdk/client-textract');
-const { getFileStream } = require('./s3');
+const { getFileStream } = require('./storage');
 
 // Initialize Textract client
+// Uses AWS SDK default credential provider chain
 const textractClient = new TextractClient({
-  region: process.env.TEXTRACT_REGION || process.env.AWS_REGION || 'us-east-1',
-  credentials: {
-    accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
-    ...(process.env.AWS_SESSION_TOKEN && { sessionToken: process.env.AWS_SESSION_TOKEN })
-  }
+  region: process.env.TEXTRACT_REGION || process.env.AWS_REGION || 'us-east-1'
+  // If credentials are not provided, SDK will use default credential provider chain
+  // To explicitly use credentials, uncomment below:
+  // credentials: process.env.AWS_ACCESS_KEY_ID ? {
+  //   accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+  //   secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+  //   ...(process.env.AWS_SESSION_TOKEN && { sessionToken: process.env.AWS_SESSION_TOKEN })
+  // } : undefined
 });
 
 /**
- * Get file from S3 with retry logic (handles race condition where file might not be uploaded yet)
- * @param {string} fileKey - S3 object key
- * @param {number} maxRetries - Maximum number of retry attempts
- * @param {number} initialDelay - Initial delay in milliseconds
- * @returns {Promise<Readable>} - File stream
- */
-async function getFileStreamWithRetry(fileKey, maxRetries = 5, initialDelay = 1000) {
-  const { getFileStream } = require('./s3');
-  
-  for (let attempt = 0; attempt < maxRetries; attempt++) {
-    try {
-      return await getFileStream(fileKey);
-    } catch (error) {
-      // Only retry on NoSuchKey errors (file doesn't exist yet)
-      // AWS SDK v3 error structure: error.Code === 'NoSuchKey' (from the error log)
-      const isNoSuchKey = error.Code === 'NoSuchKey' || 
-                         (error.message && error.message.includes('does not exist')) ||
-                         (error.message && error.message.includes('NoSuchKey'));
-      
-      if (isNoSuchKey && attempt < maxRetries - 1) {
-        const delay = initialDelay * Math.pow(2, attempt); // Exponential backoff
-        console.log(`File ${fileKey} not found, retrying in ${delay}ms (attempt ${attempt + 1}/${maxRetries})`);
-        await new Promise(resolve => setTimeout(resolve, delay));
-        continue;
-      }
-      // For other errors or final attempt, throw
-      throw error;
-    }
-  }
-}
-
-/**
  * Extract text from a document using AWS Textract
- * @param {string} fileKey - S3 object key of the document
+ * @param {string} fileKey - Firebase Storage object path
  * @returns {Promise<string>} - Extracted text content
  */
 async function extractTextFromDocument(fileKey) {
   try {
-    // Get file from S3 with retry logic
-    const fileStream = await getFileStreamWithRetry(fileKey);
+    // Get file from Firebase Storage
+    const fileStream = await getFileStream(fileKey);
 
     // Convert stream to buffer
     const chunks = [];
@@ -93,7 +64,7 @@ async function extractTextFromDocument(fileKey) {
  * Process document asynchronously (for background jobs)
  * Updates the report document in Firestore with extracted text
  * @param {string} reportId - Report document ID
- * @param {string} fileKey - S3 object key
+ * @param {string} fileKey - Firebase Storage object path
  */
 async function processDocumentAsync(reportId, fileKey) {
   try {

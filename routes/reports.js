@@ -2,15 +2,16 @@ const express = require('express');
 const { body, query, validationResult } = require('express-validator');
 const { authenticateToken } = require('../middleware/auth');
 const { asyncHandler } = require('../middleware/errorHandler');
-const { db } = require('../config/firebase');
-const { generateUploadUrl, generateDownloadUrl, exportReports } = require('../services/s3');
+const { db, admin } = require('../config/firebase');
+const { generateUploadUrl, generateDownloadUrl, exportReports } = require('../services/storage');
 const { processDocumentAsync } = require('../services/ocr');
 const { generateQRToken, validateQRToken, generateQRCodeImage, getReportsByQRToken } = require('../services/qr');
+const { generateSummaryForReports } = require('../services/ai');
 
 const router = express.Router();
 
 /**
- * Get S3 Upload URL
+ * Get Firebase Storage Upload URL
  * POST /v1/reports/upload-url
  */
 router.post('/upload-url', authenticateToken, [
@@ -106,6 +107,17 @@ router.post('/', authenticateToken, [
     const reportRef = db.collection('reports').doc();
     const reportId = reportRef.id;
 
+    // Get storage bucket name
+    const bucketName = process.env.FIREBASE_STORAGE_BUCKET;
+    if (!bucketName) {
+      throw new Error('FIREBASE_STORAGE_BUCKET environment variable is required');
+    }
+
+    // Parse reportDate from ISO string to Firestore Timestamp
+    const reportDateTimestamp = admin.firestore.Timestamp.fromDate(new Date(reportDate));
+    const uploadDateTimestamp = admin.firestore.FieldValue.serverTimestamp();
+    const createdAtTimestamp = admin.firestore.FieldValue.serverTimestamp();
+
     // Create report document
     const reportData = {
       reportId,
@@ -114,14 +126,14 @@ router.post('/', authenticateToken, [
       fileName,
       fileType: fileType.toLowerCase(),
       title,
-      reportDate,
+      reportDate: reportDateTimestamp,
       category: category || 'General',
       doctorName: doctorName || null,
       clinicName: clinicName || null,
-      uploadDate: new Date().toISOString(),
+      uploadDate: uploadDateTimestamp,
       extractedText: null,
-      s3Url: `https://${process.env.S3_BUCKET_NAME || 'hellocare-reports'}.s3.${process.env.AWS_REGION || 'us-east-1'}.amazonaws.com/${fileKey}`,
-      createdAt: new Date().toISOString()
+      storageUrl: `https://storage.googleapis.com/${bucketName}/${fileKey}`,
+      createdAt: createdAtTimestamp
     };
 
     await reportRef.set(reportData);
@@ -285,7 +297,7 @@ router.get('/:reportId', authenticateToken, asyncHandler(async (req, res) => {
 }));
 
 /**
- * Get S3 Download URL
+ * Get Firebase Storage Download URL
  * GET /v1/reports/:reportId/download-url
  */
 router.get('/:reportId/download-url', authenticateToken, asyncHandler(async (req, res) => {
@@ -320,12 +332,29 @@ router.get('/:reportId/download-url', authenticateToken, asyncHandler(async (req
       });
     }
 
-    const result = await generateDownloadUrl(reportData.fileKey);
-
-    res.json({
-      success: true,
-      data: result
-    });
+    // Verify file exists before generating download URL
+    try {
+      const result = await generateDownloadUrl(reportData.fileKey);
+      res.json({
+        success: true,
+        data: result
+      });
+    } catch (error) {
+      console.error(`Error generating download URL for report ${reportId}:`, error);
+      if (error.message && error.message.includes('File not found')) {
+        return res.status(404).json({
+          success: false,
+          error: {
+            code: 'NOT_FOUND',
+            message: 'Report file not found in storage. The file may not have been uploaded successfully.',
+            details: {
+              fileKey: reportData.fileKey
+            }
+          }
+        });
+      }
+      throw error;
+    }
   } catch (error) {
     console.error('Error generating download URL:', error);
     throw error;
@@ -424,6 +453,22 @@ router.post('/qr/generate', authenticateToken, [
     // Generate QR token
     const { qrToken, expiresAt } = await generateQRToken(reportIds, expiresIn, userId);
 
+    // Generate AI summary for selected reports (async, don't block QR generation)
+    let aiSummary = null;
+    try {
+      const summaryResult = await generateSummaryForReports(reportIds);
+      aiSummary = summaryResult.summary;
+      
+      // Store summary in QR token document
+      await db.collection('qrTokens').doc(qrToken).update({
+        aiSummary: aiSummary,
+        summaryGeneratedAt: summaryResult.generatedAt
+      });
+    } catch (error) {
+      console.error('Error generating AI summary for QR code:', error);
+      // Continue without summary - QR code generation should not fail if summary fails
+    }
+
     // Generate QR code image
     const qrCode = await generateQRCodeImage(qrToken);
 
@@ -432,7 +477,8 @@ router.post('/qr/generate', authenticateToken, [
       data: {
         qrToken,
         qrCode,
-        expiresAt
+        expiresAt,
+        aiSummary: aiSummary // Include summary in response if available
       }
     });
   } catch (error) {

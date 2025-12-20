@@ -1,6 +1,7 @@
 const crypto = require('crypto');
 const QRCode = require('qrcode');
 const { db } = require('../config/firebase');
+const { generateDownloadUrl } = require('../services/storage');
 
 const ALGORITHM = 'aes-256-gcm';
 // Generate or use provided secret key (must be 32 bytes for AES-256)
@@ -84,7 +85,7 @@ async function generateQRToken(reportIds, expiresIn = 3600, userId) {
     // Encrypt token data
     const encryptedToken = encrypt(JSON.stringify(tokenData));
 
-    // Store token in Firestore
+    // Store token in Firestore (summary will be added later)
     const tokenDoc = {
       qrToken: encryptedToken,
       reportIds,
@@ -200,21 +201,65 @@ async function getReportsByQRToken(qrToken) {
       const reportDoc = await db.collection('reports').doc(reportId).get();
       if (reportDoc.exists) {
         const reportData = reportDoc.data();
+        // Convert Firestore Timestamp to ISO string
+        let reportDateStr = null;
+        if (reportData.reportDate) {
+          if (reportData.reportDate.toDate) {
+            // Firestore Timestamp
+            reportDateStr = reportData.reportDate.toDate().toISOString();
+          } else if (reportData.reportDate instanceof Date) {
+            // Already a Date object
+            reportDateStr = reportData.reportDate.toISOString();
+          } else if (typeof reportData.reportDate === 'string') {
+            // Already a string
+            reportDateStr = reportData.reportDate;
+          }
+        }
+        
+        // Generate signed download URL for doctor access (valid for 1 hour)
+        let downloadUrl = null;
+        try {
+          if (reportData.fileKey) {
+            const urlResult = await generateDownloadUrl(reportData.fileKey, 3600);
+            downloadUrl = urlResult.downloadUrl;
+          }
+        } catch (error) {
+          console.error(`Error generating download URL for report ${reportId}:`, error);
+          // Continue without download URL - the client can handle this
+        }
+        
         // Return limited report info (for doctor viewing)
         reports.push({
           reportId: reportDoc.id,
           fileName: reportData.fileName,
           fileType: reportData.fileType,
           title: reportData.title,
-          reportDate: reportData.reportDate,
-          s3Url: reportData.s3Url
+          reportDate: reportDateStr,
+          category: reportData.category,
+          doctorName: reportData.doctorName,
+          clinicName: reportData.clinicName,
+          storageUrl: downloadUrl || reportData.storageUrl // Use signed URL if available, fallback to storageUrl
         });
       }
     }
 
+    // Get AI summary from QR token document if available
+    let aiSummary = null;
+    try {
+      const tokenDoc = await db.collection('qrTokens').doc(qrToken).get();
+      if (tokenDoc.exists) {
+        const tokenData = tokenDoc.data();
+        aiSummary = tokenData.aiSummary || null;
+      }
+    } catch (error) {
+      console.error('Error fetching AI summary from QR token:', error);
+      // Continue without summary
+    }
+
     return {
       reports,
-      expiresAt: validation.expiresAt
+      expiresAt: validation.expiresAt,
+      aiSummary: aiSummary
     };
   } catch (error) {
     console.error('Error getting reports by QR token:', error);
