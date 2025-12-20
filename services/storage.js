@@ -153,6 +153,35 @@ async function uploadFile(fileKey, fileBuffer, contentType) {
 }
 
 /**
+ * Delete file from Storage
+ * @param {string} fileKey - Storage object path
+ * @returns {Promise<void>}
+ */
+async function deleteFile(fileKey) {
+  try {
+    const bucketName = process.env.FIREBASE_STORAGE_BUCKET;
+    if (!bucketName) {
+      throw new Error('FIREBASE_STORAGE_BUCKET environment variable is required');
+    }
+    const bucket = storage.bucket(bucketName);
+    const file = bucket.file(fileKey);
+    
+    // Check if file exists
+    const [exists] = await file.exists();
+    if (!exists) {
+      console.warn(`File does not exist: ${fileKey}, skipping deletion`);
+      return; // Don't throw error if file doesn't exist
+    }
+    
+    await file.delete();
+    console.log(`File deleted successfully: ${fileKey}`);
+  } catch (error) {
+    console.error('Error deleting file from Storage:', error);
+    throw new Error('Failed to delete file from Storage');
+  }
+}
+
+/**
  * Export multiple reports as a ZIP file
  * @param {Array<string>} reportIds - Array of report IDs
  * @param {string} userId - User ID requesting the export
@@ -241,6 +270,7 @@ module.exports = {
   generateDownloadUrl,
   getFileStream,
   uploadFile,
+  deleteFile,
   exportReports
 };
 

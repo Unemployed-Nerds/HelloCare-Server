@@ -3,7 +3,7 @@ const { body, query, validationResult } = require('express-validator');
 const { authenticateToken } = require('../middleware/auth');
 const { asyncHandler } = require('../middleware/errorHandler');
 const { db, admin } = require('../config/firebase');
-const { generateUploadUrl, generateDownloadUrl, exportReports } = require('../services/storage');
+const { generateUploadUrl, generateDownloadUrl, deleteFile, exportReports } = require('../services/storage');
 const { processDocumentAsync } = require('../services/ocr');
 const { generateQRToken, validateQRToken, generateQRCodeImage, getReportsByQRToken } = require('../services/qr');
 const { generateSummaryForReports, invalidateUserCache } = require('../services/ai');
@@ -567,6 +567,71 @@ router.get('/qr/:qrToken', authenticateToken, asyncHandler(async (req, res) => {
       });
     }
 
+    throw error;
+  }
+}));
+
+/**
+ * Delete Report
+ * DELETE /v1/reports/:reportId
+ */
+router.delete('/:reportId', authenticateToken, asyncHandler(async (req, res) => {
+  const { reportId } = req.params;
+  const userId = req.user.uid;
+
+  try {
+    const reportDoc = await db.collection('reports').doc(reportId).get();
+
+    if (!reportDoc.exists) {
+      return res.status(404).json({
+        success: false,
+        error: {
+          code: 'NOT_FOUND',
+          message: 'Report not found',
+          details: {}
+        }
+      });
+    }
+
+    const reportData = reportDoc.data();
+
+    // Verify user owns the report
+    if (reportData.userId !== userId) {
+      return res.status(403).json({
+        success: false,
+        error: {
+          code: 'FORBIDDEN',
+          message: 'Access denied',
+          details: {}
+        }
+      });
+    }
+
+    // Delete the file from storage if fileKey exists
+    if (reportData.fileKey) {
+      try {
+        await deleteFile(reportData.fileKey);
+      } catch (storageError) {
+        console.error(`Error deleting file from storage: ${storageError.message}`);
+        // Continue with document deletion even if file deletion fails
+        // (file might already be deleted or not exist)
+      }
+    }
+
+    // Delete the report document from Firestore
+    await db.collection('reports').doc(reportId).delete();
+
+    // Invalidate AI summary cache for this user
+    invalidateUserCache(userId).catch(err => {
+      console.error(`Error invalidating cache for user ${userId}:`, err);
+    });
+
+    res.json({
+      success: true,
+      message: 'Report deleted successfully'
+    });
+  } catch (error) {
+    console.error('Error deleting report:', error);
     throw error;
   }
 }));
