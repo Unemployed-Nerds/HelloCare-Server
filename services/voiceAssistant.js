@@ -1,13 +1,13 @@
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+const OpenAI = require('openai');
 const { db } = require('../config/firebase');
 
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const MODEL_NAME = 'gemini-2.5-flash';
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+const MODEL_NAME = 'gpt-4o-mini';
 
 // Minimal singleton client
-let genAI = null;
-if (GEMINI_API_KEY) {
-  genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
+let openai = null;
+if (OPENAI_API_KEY) {
+  openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 }
 
 // Extract JSON object from text (handles markdown code blocks, extra text, etc.)
@@ -88,8 +88,8 @@ function extractJsonFromText(text) {
 
 // Parse user text into an intent for appointments
 async function inferIntentFromText(text, context = [], lastAction = null) {
-  if (!genAI) {
-    throw new Error('Gemini client not initialized. Set GEMINI_API_KEY.');
+  if (!openai) {
+    throw new Error('OpenAI client not initialized. Set OPENAI_API_KEY.');
   }
 
   // Build conversation context string (last 6 messages)
@@ -99,13 +99,6 @@ async function inferIntentFromText(text, context = [], lastAction = null) {
         .map((m) => `${m.role || 'user'}: ${m.text}`)
         .join('\n')
     : '';
-
-  const model = genAI.getGenerativeModel({ 
-    model: MODEL_NAME,
-    generationConfig: {
-      responseMimeType: 'application/json',
-    }
-  });
   
   const system = `You are an intent classifier for a healthcare appointments assistant.
 You MUST output ONLY valid JSON, no markdown, no code blocks, no explanations, no prose, no text before or after.
@@ -173,21 +166,34 @@ Rules:
 - For get_reports: extract filters from user query (category, date range, search term).
 - Output ONLY the JSON object, nothing else. No markdown, no code blocks, no explanations.`;
 
-  const prompt = `${system}
-
-Previous context:
+  const messages = [
+    {
+      role: 'system',
+      content: system
+    },
+    {
+      role: 'user',
+      content: `Previous context:
 ${contextString || '(no prior messages)'}
 
 Previous action (if any): ${lastAction || 'unknown'}
 
 User: ${text}
-Assistant:`;
+Assistant:`
+    }
+  ];
 
   try {
-    const result = await model.generateContent(prompt);
-    const content = await result.response.text();
+    const completion = await openai.chat.completions.create({
+      model: MODEL_NAME,
+      messages: messages,
+      response_format: { type: 'json_object' },
+      temperature: 0.3,
+    });
     
-    console.log('Gemini raw response:', content.substring(0, 500)); // Log first 500 chars for debugging
+    const content = completion.choices[0].message.content;
+    
+    console.log('OpenAI raw response:', content.substring(0, 500)); // Log first 500 chars for debugging
     
     // Try direct parse first
     let parsed;
@@ -668,14 +674,10 @@ function getNavigationRoute(text) {
 // Generate humanized, context-aware response using LLM
 async function generateHumanizedResponse(userQuery, data, action, context = []) {
   try {
-    if (!genAI) {
-      console.warn('Gemini API not configured, using fallback summary');
+    if (!openai) {
+      console.warn('OpenAI API not configured, using fallback summary');
       return fallbackSummary(data, action);
     }
-    
-    const model = genAI.getGenerativeModel({ 
-      model: MODEL_NAME,
-    });
     
     // Build context string from conversation history
     const contextString = context.length > 0
@@ -745,8 +747,20 @@ Generate a natural, conversational response that:
 
 Response (just the text, no quotes or explanations):`;
 
-    const result = await model.generateContent(prompt);
-    const response = await result.response.text();
+    const messages = [
+      {
+        role: 'system',
+        content: prompt
+      }
+    ];
+
+    const completion = await openai.chat.completions.create({
+      model: MODEL_NAME,
+      messages: messages,
+      temperature: 0.7,
+    });
+    
+    const response = completion.choices[0].message.content;
     
     return response.trim().replace(/^["']|["']$/g, ''); // Remove surrounding quotes if any
   } catch (error) {
