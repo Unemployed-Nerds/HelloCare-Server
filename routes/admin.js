@@ -38,6 +38,43 @@ const requireAdmin = async (req, res, next) => {
 };
 
 /**
+ * Get Admin Logs
+ * GET /v1/admin/logs
+ * Retrieves paginated audit logs for admin activities
+ */
+router.get('/logs', authenticateToken, requireAdmin, [
+    query('limit').optional().isInt({ min: 1, max: 100 }),
+    query('offset').optional().isInt({ min: 0 })
+], asyncHandler(async (req, res) => {
+    const limit = parseInt(req.query.limit) || 50;
+    const offset = parseInt(req.query.offset) || 0;
+
+    try {
+        console.log('Fetching admin logs...');
+        const snapshot = await db.collection('admin_logs')
+            .orderBy('timestamp', 'desc')
+            .limit(limit)
+            .offset(offset)
+            .get();
+
+        const logs = snapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data()
+        }));
+
+        res.json({
+            success: true,
+            data: {
+                logs
+            }
+        });
+    } catch (error) {
+        console.error('Error fetching admin logs:', error);
+        throw error;
+    }
+}));
+
+/**
  * Get All Patients
  * GET /v1/admin/patients
  */
@@ -168,41 +205,7 @@ router.get('/stats', authenticateToken, requireAdmin, asyncHandler(async (req, r
     }
 }));
 
-/**
- * Get Admin Logs
- * GET /v1/admin/logs
- * Retrieves paginated audit logs for admin activities
- */
-router.get('/logs', authenticateToken, requireAdmin, [
-    query('limit').optional().isInt({ min: 1, max: 100 }),
-    query('offset').optional().isInt({ min: 0 })
-], asyncHandler(async (req, res) => {
-    const limit = parseInt(req.query.limit) || 50;
-    const offset = parseInt(req.query.offset) || 0;
 
-    try {
-        const snapshot = await db.collection('admin_logs')
-            .orderBy('timestamp', 'desc')
-            .limit(limit)
-            .offset(offset)
-            .get();
-
-        const logs = snapshot.docs.map(doc => ({
-            id: doc.id,
-            ...doc.data()
-        }));
-
-        res.json({
-            success: true,
-            data: {
-                logs
-            }
-        });
-    } catch (error) {
-        console.error('Error fetching admin logs:', error);
-        throw error;
-    }
-}));
 
 /**
  * Update Appointment Status
