@@ -3,6 +3,7 @@ const { body, query, validationResult } = require('express-validator');
 const { authenticateToken } = require('../middleware/auth');
 const { asyncHandler } = require('../middleware/errorHandler');
 const { db } = require('../config/firebase');
+const { logUserAction } = require('../services/logger');
 
 const router = express.Router();
 
@@ -92,6 +93,10 @@ router.post('/', authenticateToken, [
     };
 
     await appointmentRef.set(appointmentData);
+
+    // LOG ACTION
+    const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+    logUserAction(patientId, patientData.name, 'patient', 'BOOK_APPOINTMENT', { appointmentId, doctorId, date, time }, ip);
 
     res.status(201).json({
       success: true,
@@ -380,6 +385,10 @@ router.put('/:appointmentId/status', authenticateToken, [
       status,
       updatedAt: new Date().toISOString()
     });
+
+    // LOG ACTION
+    const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+    logUserAction(userId, 'User', 'unknown', 'UPDATE_APPOINTMENT_STATUS', { appointmentId, status }, ip);
 
     res.json({
       success: true,

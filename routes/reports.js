@@ -7,6 +7,7 @@ const { generateUploadUrl, generateDownloadUrl, deleteFile, exportReports } = re
 const { processDocumentAsync } = require('../services/ocr');
 const { generateQRToken, validateQRToken, generateQRCodeImage, getReportsByQRToken } = require('../services/qr');
 const { generateSummaryForReports, invalidateUserCache } = require('../services/ai');
+const { logUserAction } = require('../services/logger');
 
 const router = express.Router();
 
@@ -51,6 +52,11 @@ router.post('/upload-url', authenticateToken, [
 
   try {
     const result = await generateUploadUrl(fileKey, contentType);
+
+    // LOG ACTION
+    const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+    logUserAction(userId, 'User', 'patient', 'INITIATE_UPLOAD', { fileName, fileType }, ip);
+
     res.json({
       success: true,
       data: result
@@ -147,6 +153,10 @@ router.post('/', authenticateToken, [
     processDocumentAsync(reportId, fileKey).catch(err => {
       console.error(`Error processing OCR for report ${reportId}:`, err);
     });
+
+    // LOG ACTION
+    const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+    logUserAction(userId, 'User', 'patient', 'SUBMIT_REPORT', { reportId, fileName, category }, ip);
 
     res.status(201).json({
       success: true,
@@ -291,6 +301,10 @@ router.get('/:reportId', authenticateToken, asyncHandler(async (req, res) => {
       });
     }
 
+    // LOG ACTION
+    const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+    logUserAction(userId, 'User', 'patient', 'VIEW_REPORT', { reportId, title: reportData.title }, ip);
+
     res.json({
       success: true,
       data: reportData
@@ -340,6 +354,11 @@ router.get('/:reportId/download-url', authenticateToken, asyncHandler(async (req
     // Verify file exists before generating download URL
     try {
       const result = await generateDownloadUrl(reportData.fileKey);
+
+      // LOG ACTION
+      const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+      logUserAction(userId, 'User', 'patient', 'DOWNLOAD_REPORT', { reportId, params: req.params }, ip);
+
       res.json({
         success: true,
         data: result
@@ -399,7 +418,7 @@ router.post('/export', authenticateToken, [
     });
   } catch (error) {
     console.error('Error exporting reports:', error);
-    
+
     if (error.message === 'No valid reports found for export') {
       return res.status(404).json({
         success: false,
@@ -463,7 +482,7 @@ router.post('/qr/generate', authenticateToken, [
     try {
       const summaryResult = await generateSummaryForReports(reportIds);
       aiSummary = summaryResult.summary;
-      
+
       // Store summary in QR token document
       await db.collection('qrTokens').doc(qrToken).update({
         aiSummary: aiSummary,

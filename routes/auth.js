@@ -3,6 +3,7 @@ const { body, validationResult } = require('express-validator');
 const { auth, db } = require('../config/firebase');
 const { asyncHandler } = require('../middleware/errorHandler');
 const axios = require('axios');
+const { logUserAction } = require('../services/logger');
 
 const router = express.Router();
 
@@ -55,6 +56,10 @@ router.post('/patient/signup', [
 
     // Generate custom token for immediate login
     const customToken = await auth.createCustomToken(userRecord.uid);
+
+    // LOG ACTION
+    const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+    logUserAction(userRecord.uid, name, 'patient', 'SIGNUP', { email }, ip);
 
     res.status(201).json({
       success: true,
@@ -331,6 +336,10 @@ router.post('/patient/login', [
       throw tokenError;
     }
 
+    // LOG ACTION
+    const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+    await logUserAction(userId, userData.name, 'patient', 'LOGIN', { email }, ip);
+
     res.json({
       success: true,
       data: {
@@ -455,6 +464,10 @@ router.post('/doctor/signup', [
 
     // Generate custom token for immediate login
     const customToken = await auth.createCustomToken(userRecord.uid);
+
+    // LOG ACTION
+    const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+    logUserAction(userRecord.uid, name, 'doctor', 'SIGNUP', { email, specialization }, ip);
 
     res.status(201).json({
       success: true,
@@ -730,6 +743,11 @@ router.post('/doctor/login', [
       }
       throw tokenError;
     }
+
+    // LOG ACTION
+    const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+    // Assuming logUserAction is defined elsewhere
+    // await logUserAction(userId, userData.name, 'doctor', 'LOGIN', { email }, ip);
 
     res.json({
       success: true,
