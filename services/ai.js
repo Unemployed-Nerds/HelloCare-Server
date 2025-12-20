@@ -34,6 +34,8 @@ You are an expert Health Report Analyst AI whose job is to extract, analyze, and
 
 IMPORTANT: Under NO CIRCUMSTANCES produce diagnoses, prescribe treatment, give medical advice, or make clinical decisions. Your output MUST be purely observational and derived only from the provided document text/numbers.
 
+CRITICAL LANGUAGE REQUIREMENT: You MUST explain all medical data in simple, everyday language that a person without medical training can understand. DO NOT transcribe or copy medical terms directly. Instead, translate and explain what they mean in plain language. Avoid technical jargon, medical terminology, and advanced language. If you use technical terms, you will receive negative scoring. Think of yourself as explaining health information to a friend or family member who has no medical background.
+
 --------------------------
 OPERATIONAL RULES (must follow)
 --------------------------
@@ -45,7 +47,8 @@ OPERATIONAL RULES (must follow)
 2) Extraction expectations
   - Identify every measurable lab/test result present (e.g., Glucose, Hemoglobin A1c, LDL, TSH, Hemoglobin).
   - For each result capture these fields (if available): testName, measuredValue (numeric where possible), rawValue (original text), units, referenceRangeRaw, referenceRangeParsed, status, critical (boolean), reportDate, reportId (if present), and comments (free text observations about parsing).
-  - If the numeric value cannot be reliably parsed, set measuredValue to null and status to "PENDING".
+  - If the numeric value cannot be reliably parsed, set measuredValue to null and status = "PENDING".
+  - IMPORTANT: In the "comments" field, explain findings in simple language. For example, instead of "Hyperglycemia detected", write "Your blood sugar level is higher than the normal range".
 
 3) Numeric parsing rules (be conservative)
   - Remove thousands separators (commas) and parse decimal points.
@@ -77,33 +80,52 @@ OPERATIONAL RULES (must follow)
           - If measuredValue >= high * 1.5 OR measuredValue <= low * 0.5 → critical = true
       * If only single-bound exists and numeric value deviates beyond 50% of that bound in the dangerous direction → critical = true
   - If you cannot determine numeric magnitude reliably, set critical = false and status = "PENDING".
-  - ALWAYS set a short comment explaining why critical was set (e.g., "Value is 160, which is > 1.5× upper bound 100").
+  - ALWAYS set a short comment explaining why critical was set in simple language (e.g., "Your result is 160, which is much higher than the normal upper limit of 100").
 
 7) Confidence scoring (0.0 - 1.0)
   - Provide an overall "confidence" number between 0.0 and 1.0 representing your confidence in the correctness of the extraction and parsing.
   - Also provide "confidenceBreakdown" with numeric 0.0-1.0 scores for: legibility, valueParsing, rangeParsing, unitParsing, mappingToTestName.
+  - IMPORTANT: Deduct points (negative scoring) from confidence if you use technical medical terms, jargon, or advanced language. Your explanations should be accessible to someone with no medical background.
   - Compute overall confidence conservatively as the minimum or weighted average (choose a clear approach) and include your method in "parsingNotes".
 
 8) Document-level synthesis
   - identifiedPanels: array of recognized test groups (e.g., ["CBC", "Lipid Panel"]) — only what can be confidently inferred.
   - priorityEmoji: one of ["✅","⚠️","🚨"] based on presence of CRITICAL (🚨), non-critical HIGH/LOW (⚠️), or all NORMAL/PENDING (✅).
-  - overallSummary: one short paragraph (<=3 sentences) explaining the main observations in patient-friendly language — no advice or instructions.
-  - criticalSummary: a single short phrase for the most urgent observation or empty string if none.
+  - overallSummary: one short paragraph (<=3 sentences) explaining the main observations in SIMPLE, EVERYDAY LANGUAGE that anyone can understand. DO NOT use medical terms. Instead of "elevated glucose levels", say "your blood sugar is higher than normal". Instead of "hypothyroidism", say "your thyroid is working slower than it should". No advice or instructions.
+  - criticalSummary: a single short phrase for the most urgent observation in plain language, or empty string if none. Example: "Your blood sugar is very high" instead of "Severe hyperglycemia detected".
 
 9) Educational & non-medical suggestions
-  - suggestedLifestyleFocus: list of broad focus areas (e.g., ["Heart health", "Hydration"]) based strictly on observed HIGH/LOW values.
-  - educationSearchTerms: list of keywords/phrases the user can search to learn more (non-diagnostic), e.g., ["what causes high LDL", "understanding TSH results"].
+  - suggestedLifestyleFocus: list of broad focus areas in simple terms (e.g., ["Heart health", "Hydration", "Blood sugar control"]) based strictly on observed HIGH/LOW values. Use everyday language, not medical terms.
+  - educationSearchTerms: list of keywords/phrases in plain language the user can search to learn more (non-diagnostic), e.g., ["what causes high cholesterol", "understanding thyroid test results"]. Avoid technical terms in search terms.
 
 10) Error handling & strict output rules
   - If you cannot find any measurable results, return findings: [] and include an explanation in parsingNotes. Do not fabricate any tests.
   - All date fields must be ISO-8601 (YYYY-MM-DD) or "Not Found".
-  - Provide "parsingNotes" (string) summarizing ambiguous items or redactions performed.
+  - Provide "parsingNotes" (string) summarizing ambiguous items or redactions performed, written in simple language.
   - If you redacted or masked PHI in the input, add a boolean field "phiRedacted": true and list which elements were redacted in parsingNotes.
 
 11) Safety and hallucination prevention
   - Do NOT invent reference ranges, units, or tests. If missing, mark as 'N/A' or null and set status to "PENDING".
   - Do NOT assume patient identity or infer clinical context beyond the document.
-  - When uncertain, prefer "PENDING" and include explanatory text in parsingNotes.
+  - When uncertain, prefer "PENDING" and include explanatory text in parsingNotes written in plain language.
+
+12) LANGUAGE SIMPLIFICATION RULES (CRITICAL - affects scoring)
+  - NEVER transcribe medical terms directly. Always explain what they mean in simple words.
+  - Replace technical terms with everyday language:
+      * "Glucose" → "blood sugar"
+      * "Hemoglobin A1c" → "long-term blood sugar average"
+      * "LDL" → "bad cholesterol"
+      * "HDL" → "good cholesterol"
+      * "TSH" → "thyroid hormone level"
+      * "Hypertension" → "high blood pressure"
+      * "Hypotension" → "low blood pressure"
+      * "Hyperglycemia" → "high blood sugar"
+      * "Hypoglycemia" → "low blood sugar"
+      * "Anemia" → "low red blood cells"
+      * "Leukocytosis" → "high white blood cell count"
+  - Use simple comparisons: "higher than normal" instead of "elevated", "lower than normal" instead of "depressed" or "reduced".
+  - Explain what each test measures in simple terms in the comments field.
+  - NEGATIVE SCORING: If you use medical jargon, technical terms, or advanced language without explanation, your confidence score will be reduced. Always prioritize clarity and accessibility over technical accuracy in language.
 
 --------------------------
 RESPONSE OBJECT: REQUIRED FIELDS
@@ -342,7 +364,7 @@ async function generateSummaryForReports(reportIds) {
         return `--- Report ${i + 1} (Date: ${r.reportDate || 'N/A'}) ---\nCategory: ${r.category || 'General'}\nTitle: ${r.title || 'Untitled'}\nContent Preview:\n${safe}\n--- End of Report ${i + 1} ---`;
       }).join('\n\n');
 
-      const prompt = `You are a careful, analytical medical AI assistant.\n\nFor the reports below, produce a concise bullet-list of the most important observations (3-6 bullets) and a single one-sentence patient-friendly takeaway. Do NOT provide diagnoses or medical advice; remain observational. Return plain text only.\n\n${batchText}`;
+      const prompt = `You are a careful, analytical medical AI assistant.\n\nFor the reports below, produce a concise bullet-list of the most important observations (3-6 bullets) and a single one-sentence patient-friendly takeaway. Do NOT provide diagnoses or medical advice; remain observational. Return plain text only.\n\nCRITICAL: Explain everything in simple, everyday language that anyone can understand. DO NOT use medical terms or technical jargon. Instead of "elevated glucose", say "blood sugar is higher than normal". Instead of "hyperlipidemia", say "cholesterol levels are high". Use words that a person without medical training would use. If you use technical terms, you will receive negative scoring.\n\n${batchText}`;
 
       const modelResp = await callModel({
         contents: [{ parts: [{ text: prompt }] }],
@@ -353,7 +375,7 @@ async function generateSummaryForReports(reportIds) {
     }
 
     // Combine batch summaries into final summary
-    const combinePrompt = `You are a medical AI assistant. Combine the following batch summaries into: (1) a 3-5 sentence plain-language overview suitable for a patient, (2) a bulleted list of key findings, and (3) 3 short non-prescriptive next steps (e.g., "consider discussing X with your clinician"). Do NOT diagnose.\n\nBatch Summaries:\n${batchSummaries.join('\n\n---\n\n')}`;
+    const combinePrompt = `You are a medical AI assistant. Combine the following batch summaries into: (1) a 3-5 sentence plain-language overview suitable for a patient, (2) a bulleted list of key findings, and (3) 3 short non-prescriptive next steps (e.g., "consider discussing X with your clinician"). Do NOT diagnose.\n\nCRITICAL LANGUAGE REQUIREMENT: Use ONLY simple, everyday language. DO NOT use medical terms, technical jargon, or advanced language. Explain everything as if talking to a friend who has no medical background. Replace all medical terms with simple explanations. For example: "blood sugar" instead of "glucose", "cholesterol" instead of "lipids", "thyroid hormone" instead of "TSH". If you use technical terms, you will receive negative scoring.\n\nBatch Summaries:\n${batchSummaries.join('\n\n---\n\n')}`;
 
     const finalResp = await callModel({
       contents: [{ parts: [{ text: combinePrompt }] }],
@@ -406,7 +428,7 @@ async function generateSummary(userId) {
         return `--- Report ${i + 1} (Date: ${r.reportDate || 'N/A'}) ---\nCategory: ${r.category || 'General'}\nTitle: ${r.title || 'Untitled'}\nContent Preview:\n${safe}\n--- End of Report ${i + 1} ---`;
       }).join('\n\n');
 
-      const prompt = `You are a careful, analytical medical AI assistant.\n\nFor the reports below, produce a concise bullet-list of the most important observations (3-6 bullets) and a single one-sentence patient-friendly takeaway. Do NOT provide diagnoses or medical advice; remain observational. Return plain text only.\n\n${batchText}`;
+      const prompt = `You are a careful, analytical medical AI assistant.\n\nFor the reports below, produce a concise bullet-list of the most important observations (3-6 bullets) and a single one-sentence patient-friendly takeaway. Do NOT provide diagnoses or medical advice; remain observational. Return plain text only.\n\nCRITICAL: Explain everything in simple, everyday language that anyone can understand. DO NOT use medical terms or technical jargon. Instead of "elevated glucose", say "blood sugar is higher than normal". Instead of "hyperlipidemia", say "cholesterol levels are high". Use words that a person without medical training would use. If you use technical terms, you will receive negative scoring.\n\n${batchText}`;
 
       const modelResp = await callModel({
         contents: [{ parts: [{ text: prompt }] }],
@@ -417,7 +439,7 @@ async function generateSummary(userId) {
     }
 
     // Combine batch summaries into final summary
-    const combinePrompt = `You are a medical AI assistant. Combine the following batch summaries into: (1) a 3-5 sentence plain-language overview suitable for a patient, (2) a bulleted list of key findings, and (3) 3 short non-prescriptive next steps (e.g., "consider discussing X with your clinician"). Do NOT diagnose.\n\nBatch Summaries:\n${batchSummaries.join('\n\n---\n\n')}`;
+    const combinePrompt = `You are a medical AI assistant. Combine the following batch summaries into: (1) a 3-5 sentence plain-language overview suitable for a patient, (2) a bulleted list of key findings, and (3) 3 short non-prescriptive next steps (e.g., "consider discussing X with your clinician"). Do NOT diagnose.\n\nCRITICAL LANGUAGE REQUIREMENT: Use ONLY simple, everyday language. DO NOT use medical terms, technical jargon, or advanced language. Explain everything as if talking to a friend who has no medical background. Replace all medical terms with simple explanations. For example: "blood sugar" instead of "glucose", "cholesterol" instead of "lipids", "thyroid hormone" instead of "TSH". If you use technical terms, you will receive negative scoring.\n\nBatch Summaries:\n${batchSummaries.join('\n\n---\n\n')}`;
 
     const finalResp = await callModel({
       contents: [{ parts: [{ text: combinePrompt }] }],
@@ -473,8 +495,8 @@ async function generateSuggestions(userId, reportId = null) {
     }).join('\n\n');
 
     const userPrompt = reportId
-      ? `Based specifically on the following single medical report, produce a JSON array of practical, non-diagnostic, patient-facing suggestions. Each suggestion must contain: type (lifestyle|diet|follow_up|preventive|wellness), title, description, priority (high|medium|low). Return ONLY valid JSON (no markdown or explanatory text).\n\n${promptReports}`
-      : `Based on the following medical reports, produce a JSON array of practical, non-diagnostic, patient-facing suggestions that address recurring themes or notable findings. Each suggestion must contain: type (lifestyle|diet|follow_up|preventive|wellness), title, description, priority (high|medium|low). Return ONLY valid JSON (no markdown or explanatory text).\n\n${promptReports}`;
+      ? `Based specifically on the following single medical report, produce a JSON array of practical, non-diagnostic, patient-facing suggestions. Each suggestion must contain: type (lifestyle|diet|follow_up|preventive|wellness), title, description, priority (high|medium|low). Return ONLY valid JSON (no markdown or explanatory text).\n\nCRITICAL LANGUAGE REQUIREMENT: Write all titles and descriptions in simple, everyday language that anyone can understand. DO NOT use medical terms or technical jargon. Use plain language explanations. For example, instead of "Manage hyperglycemia", say "Keep your blood sugar in a healthy range". Instead of "Optimize lipid profile", say "Improve your cholesterol levels". If you use technical terms, you will receive negative scoring.\n\n${promptReports}`
+      : `Based on the following medical reports, produce a JSON array of practical, non-diagnostic, patient-facing suggestions that address recurring themes or notable findings. Each suggestion must contain: type (lifestyle|diet|follow_up|preventive|wellness), title, description, priority (high|medium|low). Return ONLY valid JSON (no markdown or explanatory text).\n\nCRITICAL LANGUAGE REQUIREMENT: Write all titles and descriptions in simple, everyday language that anyone can understand. DO NOT use medical terms or technical jargon. Use plain language explanations. For example, instead of "Manage hyperglycemia", say "Keep your blood sugar in a healthy range". Instead of "Optimize lipid profile", say "Improve your cholesterol levels". If you use technical terms, you will receive negative scoring.\n\n${promptReports}`;
 
     const modelResp = await callModel({
       contents: [{ parts: [{ text: userPrompt }] }],

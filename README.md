@@ -14,7 +14,7 @@ Production-ready Node.js API server built with Express.js that provides authenti
 - **QR Code Sharing**: Secure QR code generation for sharing medical reports
 - **Appointments**: Book and manage appointments with time slot availability
 - **Doctor Management**: Doctor profiles, availability, and scheduling
-- **Payment Processing**: Mock payment integration (ready for real gateway)
+- **Payment Processing**: Razorpay order creation + confirmation for appointments
 - **File Storage**: AWS S3 integration for secure file storage
 - **OCR Processing**: Google Cloud Vision API for text extraction from medical documents
 
@@ -158,6 +158,10 @@ Production-ready Node.js API server built with Express.js that provides authenti
    # S3 Configuration
    S3_BUCKET_NAME=hellocare-reports
 
+   # Razorpay
+   RAZORPAY_KEY_ID=your_razorpay_key_id
+   RAZORPAY_KEY_SECRET=your_razorpay_key_secret
+
    # Google Gemini API
    GEMINI_API_KEY=your_gemini_api_key
 
@@ -258,7 +262,8 @@ Base URL: `https://hellocare.p1ng.me/v1` (production) or `http://localhost:3000/
 - `DELETE /v1/appointments/:appointmentId` - Cancel appointment
 
 ### Payment
-- `POST /v1/payment/process` - Process payment (mock)
+- `POST /v1/payment/process` - Create Razorpay order for an appointment
+- `POST /v1/payment/confirm` - Verify Razorpay payment signature and mark appointment paid
 
 ### Health Check
 - `GET /health` - Server health check
@@ -277,7 +282,38 @@ For detailed API documentation, see `API_DOCUMENTATION.md` in the project root.
 | `AWS_SECRET_ACCESS_KEY` | AWS secret access key | Yes | - |
 | `AWS_REGION` | AWS region | Yes | - |
 | `S3_BUCKET_NAME` | S3 bucket name | Yes | - |
+| `RAZORPAY_KEY_ID` | Razorpay API key ID | Yes (payments) | - |
+| `RAZORPAY_KEY_SECRET` | Razorpay API key secret | Yes (payments) | - |
 | `GEMINI_API_KEY` | Google Gemini API key | Yes | - |
+
+## Payment Flow & Manual Verification
+
+1. **Create Order**  
+   ```bash
+   curl -X POST http://localhost:3000/v1/payment/process \
+     -H "Authorization: Bearer <FIREBASE_ID_TOKEN>" \
+     -H "Content-Type: application/json" \
+     -d '{
+       "appointmentId": "APPOINTMENT_DOC_ID",
+       "amount": 499,
+       "currency": "INR"
+     }'
+   ```
+   - Response includes `orderId` and `keyId`. Use them on the client to open Razorpay Checkout.
+
+2. **Confirm Payment**  
+   After the client receives `razorpay_order_id`, `razorpay_payment_id`, and `razorpay_signature` from Razorpay Checkout:
+   ```bash
+   curl -X POST http://localhost:3000/v1/payment/confirm \
+     -H "Authorization: Bearer <FIREBASE_ID_TOKEN>" \
+     -H "Content-Type: application/json" \
+     -d '{
+       "orderId": "razorpay_order_id",
+       "paymentId": "razorpay_payment_id",
+       "signature": "razorpay_signature"
+     }'
+   ```
+   - On success the appointment status becomes `confirmed` and `paymentStatus` becomes `paid`. A `payments/{orderId}` document keeps an audit trail.
 | `CORS_ORIGIN` | CORS allowed origins (comma-separated) | No | `*` |
 
 *Either `FIREBASE_SERVICE_ACCOUNT_PATH` or `FIREBASE_SERVICE_ACCOUNT_JSON` is required.

@@ -21,7 +21,8 @@
     "express-validator": "^7.0.1",
     "archiver": "^7.0.1",
     "cors": "^2.8.5",
-    "axios": "^1.6.0"
+    "axios": "^1.6.0",
+    "razorpay": "^2.9.5"
   },
   "engines": {
     "node": ">=18.0.0"
