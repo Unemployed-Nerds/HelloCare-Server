@@ -1,11 +1,20 @@
+require('dotenv').config();
 const express = require('express');
+const cors = require('cors');
+
+// Initialize Firebase Admin SDK
+require('./config/firebase.js');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 // Middleware
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(cors({
+  origin: process.env.CORS_ORIGIN?.split(',') || '*',
+  credentials: true
+}));
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 // Request logging middleware
 app.use((req, res, next) => {
@@ -29,30 +38,49 @@ app.get('/', (req, res) => {
   res.json({
     message: 'HelloCare Server API',
     version: '1.0.0',
+    baseUrl: '/v1',
     endpoints: {
-      health: '/health'
+      health: '/health',
+      auth: '/v1/auth',
+      reports: '/v1/reports',
+      ai: '/v1/ai',
+      doctors: '/v1/doctors',
+      appointments: '/v1/appointments',
+      payment: '/v1/payment'
     }
   });
 });
 
+// API Routes
+const authRoutes = require('./routes/auth');
+const reportsRoutes = require('./routes/reports');
+const aiRoutes = require('./routes/ai');
+const doctorsRoutes = require('./routes/doctors');
+const appointmentsRoutes = require('./routes/appointments');
+const paymentRoutes = require('./routes/payment');
+
+app.use('/v1/auth', authRoutes);
+app.use('/v1/reports', reportsRoutes);
+app.use('/v1/ai', aiRoutes);
+app.use('/v1/doctors', doctorsRoutes);
+app.use('/v1/appointments', appointmentsRoutes);
+app.use('/v1/payment', paymentRoutes);
+
 // 404 handler
 app.use((req, res) => {
   res.status(404).json({
-    error: 'Not Found',
-    message: `Cannot ${req.method} ${req.path}`
+    success: false,
+    error: {
+      code: 'NOT_FOUND',
+      message: `Cannot ${req.method} ${req.path}`,
+      details: {}
+    }
   });
 });
 
 // Error handling middleware
-app.use((err, req, res, next) => {
-  console.error('Error:', err);
-  res.status(err.status || 500).json({
-    error: 'Internal Server Error',
-    message: process.env.NODE_ENV === 'production' 
-      ? 'An error occurred' 
-      : err.message
-  });
-});
+const { errorHandler } = require('./middleware/errorHandler');
+app.use(errorHandler);
 
 // Start server
 app.listen(PORT, '0.0.0.0', () => {

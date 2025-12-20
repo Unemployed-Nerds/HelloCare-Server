@@ -10,6 +10,15 @@ RUN npm ci --omit=dev
 
 # Copy application code
 COPY server.js ./
+COPY config/ ./config/
+COPY routes/ ./routes/
+COPY middleware/ ./middleware/
+COPY services/ ./services/
+
+# Copy Firebase service account file
+# Note: If using FIREBASE_SERVICE_ACCOUNT_JSON or FIREBASE_SERVICE_ACCOUNT_PATH env vars instead,
+# you can exclude this file using .dockerignore
+COPY firebase-service-account.json ./
 
 # Create non-root user
 RUN addgroup -g 1001 -S nodejs && \
