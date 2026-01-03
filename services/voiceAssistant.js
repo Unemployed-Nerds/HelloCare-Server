@@ -1,14 +1,9 @@
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+const axios = require('axios');
 const { db } = require('../config/firebase');
 
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const MODEL_NAME = 'gemini-2.5-flash';
-
-// Minimal singleton client
-let genAI = null;
-if (GEMINI_API_KEY) {
-  genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-}
+const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
+const MODEL_NAME = 'z-ai/glm-4.5-air:free';
+const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
 
 // Extract JSON object from text (handles markdown code blocks, extra text, etc.)
 function extractJsonFromText(text) {
@@ -86,10 +81,42 @@ function extractJsonFromText(text) {
   return null;
 }
 
+// Helper function to call OpenRouter API
+async function callOpenRouter(systemPrompt, userPrompt) {
+  if (!OPENROUTER_API_KEY) {
+    throw new Error('OpenRouter API key not configured. Set OPENROUTER_API_KEY.');
+  }
+
+  try {
+    const response = await axios.post(
+      OPENROUTER_API_URL,
+      {
+        model: MODEL_NAME,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt }
+        ],
+        temperature: 0.7,
+      },
+      {
+        headers: {
+          'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+      }
+    );
+
+    return response.data.choices[0]?.message?.content || '';
+  } catch (error) {
+    console.error('OpenRouter API Error:', error.response?.data || error.message);
+    throw new Error(`OpenRouter API Error: ${error.response?.data?.error?.message || error.message}`);
+  }
+}
+
 // Parse user text into an intent for appointments
 async function inferIntentFromText(text, context = [], lastAction = null) {
-  if (!genAI) {
-    throw new Error('Gemini client not initialized. Set GEMINI_API_KEY.');
+  if (!OPENROUTER_API_KEY) {
+    throw new Error('OpenRouter API key not configured. Set OPENROUTER_API_KEY.');
   }
 
   // Build conversation context string (last 6 messages)
@@ -100,91 +127,63 @@ async function inferIntentFromText(text, context = [], lastAction = null) {
         .join('\n')
     : '';
   
-  const systemPrompt = `You are an intent classifier for a healthcare appointments assistant.
-You MUST output ONLY valid JSON, no markdown, no code blocks, no explanations, no prose, no text before or after.
+  const systemPrompt = `You are a precise intent classifier for a healthcare voice assistant. Your ONLY job is to extract user intent and return valid JSON.
 
-Supported actions:
-  - get_patient_appointments: list a patient's appointments with optional filters.
-  - cancel_appointment: cancel an appointment by id.
-  - book_appointment: book a new appointment with a doctor.
-  - navigate: navigate to a page/module (reports, appointments, ai_summary, suggestions, profile, submit_report, etc.).
-  - get_reports: list patient's medical reports with optional filters.
-  - get_ai_summary: get AI-generated health summary.
-  - get_ai_suggestions: get AI health suggestions.
+CRITICAL OUTPUT RULES:
+- Output ONLY valid JSON. No markdown, no code blocks, no explanations, no text before/after.
+- Start with { and end with }. Nothing else.
+- Use null for missing values, not empty strings or undefined.
 
-If information is missing, set needsClarification=true and ask only ONE concise question in followUp.
-Keep responses concise and natural; it's okay to be informal and brief.
+AVAILABLE ACTIONS:
+1. get_patient_appointments - List appointments (supports filters: status, date, startDate, endDate)
+2. cancel_appointment - Cancel by appointmentId
+3. book_appointment - Book new appointment (requires: doctorName/doctorId, date, time)
+4. navigate - Navigate to page (route required: /patient/reports, /patient/appointments, /patient/ai-summary, /patient/suggestions, /patient/profile, /patient/submit-report)
+5. get_reports - List medical reports (supports: category, fileType, startDate, endDate, search)
+6. get_ai_summary - Get health summary
+7. get_ai_suggestions - Get health suggestions
 
-You MUST return this exact JSON structure:
+REQUIRED JSON STRUCTURE:
 {
-  "action": "get_patient_appointments" | "cancel_appointment" | "book_appointment" | "navigate" | "get_reports" | "get_ai_summary" | "get_ai_suggestions",
-  "filters": {
-    "status": "pending" | "confirmed" | "completed" | "cancelled" | null,
-    "date": "YYYY-MM-DD" | null,
-    "startDate": "YYYY-MM-DD" | null,
-    "endDate": "YYYY-MM-DD" | null
-  },
-  "appointmentId": "string" | null,
-  "booking": {
-    "doctorName": "string" | null,
-    "doctorId": "string" | null,
-    "date": "YYYY-MM-DD" | null,
-    "time": "HH:mm" | null,
-    "duration": 30,
-    "notes": "string" | null
-  },
-  "navigation": {
-    "route": "string" | null,
-    "moduleId": "string" | null
-  },
-  "reportFilters": {
-    "category": "string" | null,
-    "fileType": "string" | null,
-    "startDate": "YYYY-MM-DD" | null,
-    "endDate": "YYYY-MM-DD" | null,
-    "search": "string" | null
-  },
+  "action": "action_name",
+  "filters": {"status": null, "date": null, "startDate": null, "endDate": null},
+  "appointmentId": null,
+  "booking": {"doctorName": null, "doctorId": null, "date": null, "time": null, "duration": 30, "notes": null},
+  "navigation": {"route": null, "moduleId": null},
+  "reportFilters": {"category": null, "fileType": null, "startDate": null, "endDate": null, "search": null},
   "needsClarification": false,
-  "followUp": "string" | null
+  "followUp": null
 }
 
-Rules:
-- Do not invent IDs or dates.
-- If cancel is requested without an appointment id, set needsClarification=true and followUp asking for the appointment id.
-- If book_appointment is requested:
-  - Extract doctorName from user input (e.g., "Dr. Smith", "Smith", "doctor smith")
-  - Extract date (resolve today/tomorrow/weekday to ISO date YYYY-MM-DD)
-  - Extract time in HH:mm format (e.g., "2 PM" → "14:00", "10:30 AM" → "10:30")
-  - If doctorName is missing, set needsClarification=true and followUp="Which doctor would you like to book with?"
-  - If date is missing, set needsClarification=true and followUp="What date would you like to book?"
-  - If time is missing, set needsClarification=true and followUp="What time would you like to book?"
-- Prefer specific date if user said today/tomorrow/weekday; resolve to ISO date (YYYY-MM-DD).
-- If user asks for upcoming/next, set startDate=today (YYYY-MM-DD) and leave endDate=null.
-- For navigate action:
-  - Common routes: "reports" → "/patient/reports", "appointments" → "/patient/appointments", "ai summary" → "/patient/ai-summary", "suggestions" → "/patient/suggestions", "profile" → "/patient/profile", "submit report" → "/patient/submit-report"
-  - Extract route from user intent (e.g., "show reports" → route="/patient/reports", "go to appointments" → route="/patient/appointments")
-- For get_reports: extract filters from user query (category, date range, search term).
-- Output ONLY the JSON object, nothing else. No markdown, no code blocks, no explanations.`;
+EXTRACTION RULES:
+- Dates: Convert "today"/"tomorrow"/weekdays to ISO YYYY-MM-DD. "upcoming"/"next" → startDate=today, endDate=null.
+- Time: Convert to 24h HH:mm format ("2 PM" → "14:00", "10:30 AM" → "10:30").
+- Doctor names: Extract from "Dr. Smith", "Smith", "doctor smith" → doctorName="Smith".
+- Routes: Map keywords → "/patient/reports", "/patient/appointments", "/patient/ai-summary", "/patient/suggestions", "/patient/profile", "/patient/submit-report".
+- Status: Map "pending"/"confirmed"/"completed"/"cancelled" exactly.
 
-  const userPrompt = `Previous context:
-${contextString || '(no prior messages)'}
+CLARIFICATION RULES:
+- If booking missing doctorName → needsClarification=true, followUp="Which doctor would you like to book with?"
+- If booking missing date → needsClarification=true, followUp="What date would you like to book?"
+- If booking missing time → needsClarification=true, followUp="What time would you like to book?"
+- If cancel missing appointmentId → needsClarification=true, followUp="Which appointment would you like to cancel?"
+- Never invent IDs, dates, or data. Use null if uncertain.
 
-Previous action (if any): ${lastAction || 'unknown'}
+OUTPUT: Return ONLY the JSON object. No other text.`;
 
-User: ${text}
+  const userPrompt = `CONTEXT:
+${contextString || 'No prior messages'}
 
-Please analyze the user's intent and return ONLY the JSON object as specified.`;
+LAST ACTION: ${lastAction || 'None'}
 
-  // Combine system prompt with user prompt for Gemini
-  const fullPrompt = `${systemPrompt}\n\n${userPrompt}`;
+CURRENT USER INPUT: "${text}"
+
+TASK: Analyze the user's intent and extract all relevant information. Return ONLY the JSON object matching the required structure.`;
 
   try {
-    const model = genAI.getGenerativeModel({ model: MODEL_NAME });
-    const result = await model.generateContent(fullPrompt);
-    const response = await result.response;
-    const content = response.text();
+    const content = await callOpenRouter(systemPrompt, userPrompt);
     
-    console.log('Gemini raw response:', content.substring(0, 500)); // Log first 500 chars for debugging
+    console.log('OpenRouter raw response:', content.substring(0, 500)); // Log first 500 chars for debugging
     
     // Try direct parse first
     let parsed;
@@ -665,8 +664,8 @@ function getNavigationRoute(text) {
 // Generate humanized, context-aware response using LLM
 async function generateHumanizedResponse(userQuery, data, action, context = []) {
   try {
-    if (!genAI) {
-      console.warn('Gemini API not configured, using fallback summary');
+    if (!OPENROUTER_API_KEY) {
+      console.warn('OpenRouter API not configured, using fallback summary');
       return fallbackSummary(data, action);
     }
     
@@ -715,33 +714,27 @@ async function generateHumanizedResponse(userQuery, data, action, context = []) 
       dataSummary = typeof data === 'string' ? data : JSON.stringify(data);
     }
     
-    const prompt = `You are a friendly, helpful healthcare voice assistant. Your role is to provide natural, conversational responses to users.
+    const systemPrompt = `You are a warm, empathetic healthcare voice assistant. Your responses are:
+- Natural and conversational (not robotic)
+- Concise (1-3 sentences maximum)
+- Warm and empathetic (healthcare context)
+- Directly addressing the user's query
+- Incorporating data naturally (not just listing)
 
-Previous conversation context:
+CRITICAL: Return ONLY the response text. No quotes, no explanations, no markdown, no prefixes.`;
+
+    const prompt = `CONVERSATION HISTORY:
 ${contextString}
 
-User's current query: "${userQuery}"
+USER QUERY: "${userQuery}"
 
-Action taken: ${action}
+ACTION EXECUTED: ${action}
 
-Data retrieved:
+DATA RESULT:
 ${dataSummary}
 
-Generate a natural, conversational response that:
-1. Directly addresses the user's query in a friendly, human way
-2. Incorporates the data naturally (don't just list it)
-3. Uses natural language (e.g., "You have 2 appointments coming up" instead of "2 appointments found")
-4. Is concise but informative (1-3 sentences max)
-5. Sounds like a helpful assistant, not a robot reading data
-6. If asking follow-up questions, make them conversational and natural
-7. Be warm and empathetic, especially for healthcare context
-
-Response (just the text, no quotes or explanations):`;
-
-    const model = genAI.getGenerativeModel({ model: MODEL_NAME });
-    const result = await model.generateContent(prompt);
-    const geminiResponse = await result.response;
-    const response = geminiResponse.text();
+TASK: Generate a natural, warm response that directly answers the user's query using the data above. Be conversational, empathetic, and concise.`;
+    const response = await callOpenRouter(systemPrompt, prompt);
     
     return response.trim().replace(/^["']|["']$/g, ''); // Remove surrounding quotes if any
   } catch (error) {
