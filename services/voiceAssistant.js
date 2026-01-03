@@ -2,7 +2,14 @@ const axios = require('axios');
 const { db } = require('../config/firebase');
 
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
-const MODEL_NAME = 'z-ai/glm-4.5-air:free';
+// Fallback models in order of preference
+const MODELS = [
+  'mistralai/devstral-2512:free',
+  'openai/gpt-oss-120b:free',
+  'allenai/olmo-3.1-32b-think:free',
+  'xiaomi/mimo-v2-flash:free',
+  'z-ai/glm-4.5-air:free',
+];
 const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
 
 // Extract JSON object from text (handles markdown code blocks, extra text, etc.)
@@ -81,17 +88,24 @@ function extractJsonFromText(text) {
   return null;
 }
 
-// Helper function to call OpenRouter API
-async function callOpenRouter(systemPrompt, userPrompt) {
+// Helper function to call OpenRouter API with fallback models
+async function callOpenRouter(systemPrompt, userPrompt, modelIndex = 0) {
   if (!OPENROUTER_API_KEY) {
     throw new Error('OpenRouter API key not configured. Set OPENROUTER_API_KEY.');
   }
+
+  if (modelIndex >= MODELS.length) {
+    throw new Error('All models failed. No more fallback models available.');
+  }
+
+  const model = MODELS[modelIndex];
+  console.log(`Attempting API call with model: ${model} (${modelIndex + 1}/${MODELS.length})`);
 
   try {
     const response = await axios.post(
       OPENROUTER_API_URL,
       {
-        model: MODEL_NAME,
+        model: model,
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userPrompt }
@@ -106,10 +120,37 @@ async function callOpenRouter(systemPrompt, userPrompt) {
       }
     );
 
-    return response.data.choices[0]?.message?.content || '';
+    const content = response.data.choices[0]?.message?.content || '';
+    if (modelIndex > 0) {
+      console.log(`Successfully used fallback model: ${model}`);
+    }
+    return content;
   } catch (error) {
-    console.error('OpenRouter API Error:', error.response?.data || error.message);
-    throw new Error(`OpenRouter API Error: ${error.response?.data?.error?.message || error.message}`);
+    const errorData = error.response?.data || {};
+    const errorCode = errorData.error?.code;
+    const errorMessage = errorData.error?.message || error.message;
+    
+    console.error(`OpenRouter API Error with ${model}:`, {
+      code: errorCode,
+      message: errorMessage,
+      model: model
+    });
+
+    // Check if we should retry with next model (429 rate limit, 503 service unavailable, or provider errors)
+    const shouldRetry = errorCode === 429 || 
+                        errorCode === 503 || 
+                        errorMessage?.includes('rate-limited') ||
+                        errorMessage?.includes('temporarily') ||
+                        errorMessage?.includes('Provider returned error');
+
+    if (shouldRetry && modelIndex < MODELS.length - 1) {
+      console.log(`Retrying with next model (${modelIndex + 2}/${MODELS.length})...`);
+      // Retry with next model, preserving all context
+      return callOpenRouter(systemPrompt, userPrompt, modelIndex + 1);
+    }
+
+    // If last model or non-retryable error, throw
+    throw new Error(`OpenRouter API Error: ${errorMessage}`);
   }
 }
 
