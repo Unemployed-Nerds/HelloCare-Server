@@ -14,10 +14,13 @@ const options = {
         },
         servers: [
             {
+                url: 'https://hellocare.p1ng.me/v1',
+                description: 'Production Server',
+            },
+            {
                 url: 'http://localhost:3000/v1',
                 description: 'Local development server',
             },
-            // Add production server here when available
         ],
         components: {
             securitySchemes: {
