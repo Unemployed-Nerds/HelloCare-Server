@@ -12,8 +12,37 @@ const { logUserAction } = require('../services/logger');
 const router = express.Router();
 
 /**
- * Get Firebase Storage Upload URL
- * POST /v1/reports/upload-url
+ * @swagger
+ * /reports/upload-url:
+ *   post:
+ *     summary: Get a signed URL for uploading a report
+ *     tags: [Reports]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - fileName
+ *               - fileType
+ *               - fileSize
+ *             properties:
+ *               fileName:
+ *                 type: string
+ *               fileType:
+ *                 type: string
+ *               fileSize:
+ *                 type: integer
+ *     responses:
+ *       200:
+ *         description: Upload URL generated successfully
+ *       400:
+ *         description: Validation error
+ *       401:
+ *         description: Unauthorized
  */
 router.post('/upload-url', authenticateToken, [
   body('fileName').trim().notEmpty(),
@@ -70,8 +99,50 @@ router.post('/upload-url', authenticateToken, [
 }));
 
 /**
- * Submit Report Metadata
- * POST /v1/reports
+ * @swagger
+ * /reports:
+ *   post:
+ *     summary: Submit report metadata after upload
+ *     tags: [Reports]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - fileKey
+ *               - fileName
+ *               - fileType
+ *               - title
+ *               - reportDate
+ *             properties:
+ *               fileKey:
+ *                 type: string
+ *               fileName:
+ *                 type: string
+ *               fileType:
+ *                 type: string
+ *               title:
+ *                 type: string
+ *               reportDate:
+ *                 type: string
+ *                 format: date-time
+ *               category:
+ *                 type: string
+ *               doctorName:
+ *                 type: string
+ *               clinicName:
+ *                 type: string
+ *     responses:
+ *       201:
+ *         description: Report submitted successfully
+ *       400:
+ *         description: Validation error
+ *       401:
+ *         description: Unauthorized
  */
 router.post('/', authenticateToken, [
   body('fileKey').trim().notEmpty(),
@@ -174,8 +245,51 @@ router.post('/', authenticateToken, [
 }));
 
 /**
- * Get User Reports
- * GET /v1/reports
+ * @swagger
+ * /reports:
+ *   get:
+ *     summary: Get user reports with filtering and pagination
+ *     tags: [Reports]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           default: 1
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 20
+ *       - in: query
+ *         name: category
+ *         schema:
+ *           type: string
+ *       - in: query
+ *         name: fileType
+ *         schema:
+ *           type: string
+ *       - in: query
+ *         name: startDate
+ *         schema:
+ *           type: string
+ *           format: date
+ *       - in: query
+ *         name: endDate
+ *         schema:
+ *           type: string
+ *           format: date
+ *       - in: query
+ *         name: search
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: List of reports
+ *       401:
+ *         description: Unauthorized
  */
 router.get('/', authenticateToken, [
   query('page').optional().isInt({ min: 1 }),
@@ -270,8 +384,26 @@ router.get('/', authenticateToken, [
 }));
 
 /**
- * Get Report Details
- * GET /v1/reports/:reportId
+ * @swagger
+ * /reports/{reportId}:
+ *   get:
+ *     summary: Get details of a specific report
+ *     tags: [Reports]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: reportId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Report details
+ *       404:
+ *         description: Report not found
+ *       403:
+ *         description: Access denied
  */
 router.get('/:reportId', authenticateToken, asyncHandler(async (req, res) => {
   const { reportId } = req.params;
@@ -322,8 +454,26 @@ router.get('/:reportId', authenticateToken, asyncHandler(async (req, res) => {
 }));
 
 /**
- * Get Firebase Storage Download URL
- * GET /v1/reports/:reportId/download-url
+ * @swagger
+ * /reports/{reportId}/download-url:
+ *   get:
+ *     summary: Get a signed URL for downloading a report
+ *     tags: [Reports]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: reportId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Download URL generated successfully
+ *       404:
+ *         description: Report not found
+ *       403:
+ *         description: Access denied
  */
 router.get('/:reportId/download-url', authenticateToken, asyncHandler(async (req, res) => {
   const { reportId } = req.params;
@@ -394,8 +544,36 @@ router.get('/:reportId/download-url', authenticateToken, asyncHandler(async (req
 }));
 
 /**
- * Export Reports
- * POST /v1/reports/export
+ * @swagger
+ * /reports/export:
+ *   post:
+ *     summary: Export selected reports
+ *     tags: [Reports]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - reportIds
+ *             properties:
+ *               reportIds:
+ *                 type: array
+ *                 items:
+ *                   type: string
+ *               format:
+ *                 type: string
+ *                 default: zip
+ *     responses:
+ *       200:
+ *         description: Export successful
+ *       400:
+ *         description: Validation error
+ *       404:
+ *         description: No valid reports found
  */
 router.post('/export', authenticateToken, [
   body('reportIds').isArray({ min: 1 }),
@@ -443,8 +621,34 @@ router.post('/export', authenticateToken, [
 }));
 
 /**
- * Generate QR Code for Reports
- * POST /v1/reports/qr/generate
+ * @swagger
+ * /reports/qr/generate:
+ *   post:
+ *     summary: Generate a QR code for sharing reports
+ *     tags: [Reports]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - reportIds
+ *             properties:
+ *               reportIds:
+ *                 type: array
+ *                 items:
+ *                   type: string
+ *               expiresIn:
+ *                 type: integer
+ *                 default: 3600
+ *     responses:
+ *       200:
+ *         description: QR code generated successfully
+ *       403:
+ *         description: Access denied to one or more reports
  */
 router.post('/qr/generate', authenticateToken, [
   body('reportIds').isArray({ min: 1 }),
@@ -520,8 +724,29 @@ router.post('/qr/generate', authenticateToken, [
 }));
 
 /**
- * Validate QR Code Token
- * POST /v1/reports/qr/validate
+ * @swagger
+ * /reports/qr/validate:
+ *   post:
+ *     summary: Validate a QR token
+ *     tags: [Reports]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - qrToken
+ *             properties:
+ *               qrToken:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Token is valid
+ *       400:
+ *         description: Invalid token
  */
 router.post('/qr/validate', authenticateToken, [
   body('qrToken').trim().notEmpty()
@@ -554,8 +779,26 @@ router.post('/qr/validate', authenticateToken, [
 }));
 
 /**
- * Get Reports via QR Token (Doctor Access)
- * GET /v1/reports/qr/:qrToken
+ * @swagger
+ * /reports/qr/{qrToken}:
+ *   get:
+ *     summary: Get reports associated with a QR token (Doctor only)
+ *     tags: [Reports]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: qrToken
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: List of reports
+ *       403:
+ *         description: Doctor access required
+ *       404:
+ *         description: Invalid or expired token
  */
 router.get('/qr/:qrToken', authenticateToken, asyncHandler(async (req, res) => {
   const { qrToken } = req.params;
@@ -599,8 +842,26 @@ router.get('/qr/:qrToken', authenticateToken, asyncHandler(async (req, res) => {
 }));
 
 /**
- * Delete Report
- * DELETE /v1/reports/:reportId
+ * @swagger
+ * /reports/{reportId}:
+ *   delete:
+ *     summary: Delete a report
+ *     tags: [Reports]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: reportId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Report deleted successfully
+ *       404:
+ *         description: Report not found
+ *       403:
+ *         description: Access denied
  */
 router.delete('/:reportId', authenticateToken, asyncHandler(async (req, res) => {
   const { reportId } = req.params;
@@ -670,4 +931,3 @@ router.delete('/:reportId', authenticateToken, asyncHandler(async (req, res) => 
 }));
 
 module.exports = router;
-

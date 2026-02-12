@@ -11,6 +11,46 @@ const router = express.Router();
  * Book Appointment
  * POST /v1/appointments
  */
+/**
+ * @swagger
+ * /appointments:
+ *   post:
+ *     summary: Book an appointment
+ *     tags: [Appointments]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - doctorId
+ *               - date
+ *               - time
+ *             properties:
+ *               doctorId:
+ *                 type: string
+ *               date:
+ *                 type: string
+ *                 format: date
+ *               time:
+ *                 type: string
+ *                 example: "14:30"
+ *               duration:
+ *                 type: integer
+ *                 default: 30
+ *               notes:
+ *                 type: string
+ *     responses:
+ *       201:
+ *         description: Appointment booked
+ *       400:
+ *         description: Validation error
+ *       404:
+ *         description: Doctor not found
+ */
 router.post('/', authenticateToken, [
   body('doctorId').trim().notEmpty(),
   body('date').isISO8601(),
@@ -113,6 +153,38 @@ router.post('/', authenticateToken, [
  * Get Patient Appointments
  * GET /v1/appointments/patient
  */
+/**
+ * @swagger
+ * /appointments/patient:
+ *   get:
+ *     summary: Get patient appointments
+ *     tags: [Appointments]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: status
+ *         schema:
+ *           type: string
+ *           enum: [pending, confirmed, completed, cancelled]
+ *       - in: query
+ *         name: startDate
+ *         schema:
+ *           type: string
+ *           format: date
+ *       - in: query
+ *         name: endDate
+ *         schema:
+ *           type: string
+ *           format: date
+ *       - in: query
+ *         name: doctorId
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: List of appointments
+ */
 router.get('/patient', authenticateToken, [
   query('status').optional().isIn(['pending', 'confirmed', 'completed', 'cancelled']),
   query('startDate').optional().isISO8601(),
@@ -186,6 +258,41 @@ router.get('/patient', authenticateToken, [
 /**
  * Get Doctor Appointments
  * GET /v1/appointments/doctor
+ */
+/**
+ * @swagger
+ * /appointments/doctor:
+ *   get:
+ *     summary: Get doctor appointments
+ *     tags: [Appointments]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: status
+ *         schema:
+ *           type: string
+ *           enum: [pending, confirmed, completed, cancelled]
+ *       - in: query
+ *         name: date
+ *         schema:
+ *           type: string
+ *           format: date
+ *       - in: query
+ *         name: startDate
+ *         schema:
+ *           type: string
+ *           format: date
+ *       - in: query
+ *         name: endDate
+ *         schema:
+ *           type: string
+ *           format: date
+ *     responses:
+ *       200:
+ *         description: List of appointments
+ *       403:
+ *         description: Access denied (Not a doctor)
  */
 router.get('/doctor', authenticateToken, [
   query('status').optional().isIn(['pending', 'confirmed', 'completed', 'cancelled']),
@@ -274,6 +381,28 @@ router.get('/doctor', authenticateToken, [
  * Get Appointment Details
  * GET /v1/appointments/:appointmentId
  */
+/**
+ * @swagger
+ * /appointments/{appointmentId}:
+ *   get:
+ *     summary: Get appointment details
+ *     tags: [Appointments]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: appointmentId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Appointment details
+ *       403:
+ *         description: Access denied
+ *       404:
+ *         description: Appointment not found
+ */
 router.get('/:appointmentId', authenticateToken, asyncHandler(async (req, res) => {
   const { appointmentId } = req.params;
   const userId = req.user.uid;
@@ -332,6 +461,40 @@ router.get('/:appointmentId', authenticateToken, asyncHandler(async (req, res) =
 /**
  * Update Appointment Status
  * PUT /v1/appointments/:appointmentId/status
+ */
+/**
+ * @swagger
+ * /appointments/{appointmentId}/status:
+ *   put:
+ *     summary: Update appointment status
+ *     tags: [Appointments]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: appointmentId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - status
+ *             properties:
+ *               status:
+ *                 type: string
+ *                 enum: [pending, confirmed, completed, cancelled]
+ *     responses:
+ *       200:
+ *         description: Status updated
+ *       403:
+ *         description: Access denied
+ *       404:
+ *         description: Appointment not found
  */
 router.put('/:appointmentId/status', authenticateToken, [
   body('status').isIn(['pending', 'confirmed', 'completed', 'cancelled'])
@@ -405,6 +568,39 @@ router.put('/:appointmentId/status', authenticateToken, [
 /**
  * Add Doctor Notes to Appointment
  * PUT /v1/appointments/:appointmentId/notes
+ */
+/**
+ * @swagger
+ * /appointments/{appointmentId}/notes:
+ *   put:
+ *     summary: Add doctor notes to appointment
+ *     tags: [Appointments]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: appointmentId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - doctorNotes
+ *             properties:
+ *               doctorNotes:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Notes updated
+ *       403:
+ *         description: Access denied
+ *       404:
+ *         description: Appointment not found
  */
 router.put('/:appointmentId/notes', authenticateToken, [
   body('doctorNotes').trim().notEmpty()
@@ -486,6 +682,28 @@ router.put('/:appointmentId/notes', authenticateToken, [
  * Cancel Appointment
  * DELETE /v1/appointments/:appointmentId
  */
+/**
+ * @swagger
+ * /appointments/{appointmentId}:
+ *   delete:
+ *     summary: Cancel appointment
+ *     tags: [Appointments]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: appointmentId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Appointment cancelled
+ *       403:
+ *         description: Access denied
+ *       404:
+ *         description: Appointment not found
+ */
 router.delete('/:appointmentId', authenticateToken, asyncHandler(async (req, res) => {
   const { appointmentId } = req.params;
   const userId = req.user.uid;
@@ -535,4 +753,3 @@ router.delete('/:appointmentId', authenticateToken, asyncHandler(async (req, res
 }));
 
 module.exports = router;
-

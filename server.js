@@ -4,6 +4,8 @@ const cors = require('cors');
 
 // Initialize Firebase Admin SDK
 require('./config/firebase.js');
+const swaggerUi = require('swagger-ui-express');
+const swaggerSpecs = require('./config/swagger');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -70,6 +72,9 @@ app.use('/v1/payment', paymentRoutes);
 app.use('/v1/admin', adminRoutes);
 app.use('/v1/voice', voiceRoutes);
 
+// Swagger Documentation
+app.use('/docs', swaggerUi.serve, swaggerUi.setup(swaggerSpecs));
+
 // 404 handler
 app.use((req, res) => {
   res.status(404).json({
@@ -102,4 +107,3 @@ process.on('SIGINT', () => {
   console.log('SIGINT signal received: closing HTTP server');
   process.exit(0);
 });
-

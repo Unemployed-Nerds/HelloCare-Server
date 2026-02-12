@@ -11,6 +11,42 @@ const router = express.Router();
  * Create Razorpay Order
  * POST /v1/payment/process
  */
+/**
+ * @swagger
+ * /payment/process:
+ *   post:
+ *     summary: Create Razorpay Order
+ *     tags: [Payment]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - appointmentId
+ *               - amount
+ *             properties:
+ *               appointmentId:
+ *                 type: string
+ *               amount:
+ *                 type: number
+ *                 min: 1
+ *               currency:
+ *                 type: string
+ *                 default: INR
+ *     responses:
+ *       200:
+ *         description: Order created
+ *       400:
+ *         description: Validation error or already paid
+ *       403:
+ *         description: Access denied
+ *       404:
+ *         description: Appointment not found
+ */
 router.post('/process', authenticateToken, [
   body('appointmentId').trim().notEmpty(),
   body('amount').isFloat({ min: 1 }),
@@ -113,6 +149,41 @@ router.post('/process', authenticateToken, [
 /**
  * Confirm Razorpay Payment
  * POST /v1/payment/confirm
+ */
+/**
+ * @swagger
+ * /payment/confirm:
+ *   post:
+ *     summary: Confirm Razorpay Payment
+ *     tags: [Payment]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - orderId
+ *               - paymentId
+ *               - signature
+ *             properties:
+ *               orderId:
+ *                 type: string
+ *               paymentId:
+ *                 type: string
+ *               signature:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Payment confirmed
+ *       400:
+ *         description: Invalid signature
+ *       403:
+ *         description: Access denied
+ *       404:
+ *         description: Payment or Appointment not found
  */
 router.post('/confirm', authenticateToken, [
   body('orderId').trim().notEmpty(),
@@ -231,4 +302,3 @@ router.post('/confirm', authenticateToken, [
 }));
 
 module.exports = router;
-

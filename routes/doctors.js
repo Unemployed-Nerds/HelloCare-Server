@@ -10,6 +10,25 @@ const router = express.Router();
  * Get All Doctors
  * GET /v1/doctors
  */
+/**
+ * @swagger
+ * /doctors:
+ *   get:
+ *     summary: Get all doctors with filtering
+ *     tags: [Doctors]
+ *     parameters:
+ *       - in: query
+ *         name: specialization
+ *         schema:
+ *           type: string
+ *       - in: query
+ *         name: search
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: List of doctors
+ */
 router.get('/', [
   query('specialization').optional().trim(),
   query('search').optional().trim()
@@ -81,6 +100,24 @@ router.get('/', [
  * Get Doctor Details
  * GET /v1/doctors/:doctorId
  */
+/**
+ * @swagger
+ * /doctors/{doctorId}:
+ *   get:
+ *     summary: Get doctor details by ID
+ *     tags: [Doctors]
+ *     parameters:
+ *       - in: path
+ *         name: doctorId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Doctor details
+ *       404:
+ *         description: Doctor not found
+ */
 router.get('/:doctorId', asyncHandler(async (req, res) => {
   const { doctorId } = req.params;
 
@@ -133,6 +170,40 @@ router.get('/:doctorId', asyncHandler(async (req, res) => {
 /**
  * Update Doctor Availability
  * PUT /v1/doctors/:doctorId/availability
+ */
+/**
+ * @swagger
+ * /doctors/{doctorId}/availability:
+ *   put:
+ *     summary: Update doctor availability
+ *     tags: [Doctors]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: doctorId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - availability
+ *             properties:
+ *               availability:
+ *                 type: object
+ *                 description: Map of day names to availability objects
+ *     responses:
+ *       200:
+ *         description: Availability updated
+ *       403:
+ *         description: Access denied
+ *       404:
+ *         description: Doctor not found
  */
 router.put('/:doctorId/availability', authenticateToken, requireRole('doctor'), [
   body('availability').isObject()
@@ -219,6 +290,30 @@ router.put('/:doctorId/availability', authenticateToken, requireRole('doctor'), 
  * Get Available Time Slots
  * GET /v1/doctors/:doctorId/slots
  */
+/**
+ * @swagger
+ * /doctors/{doctorId}/slots:
+ *   get:
+ *     summary: Get available time slots for a doctor
+ *     tags: [Doctors]
+ *     parameters:
+ *       - in: path
+ *         name: doctorId
+ *         required: true
+ *         schema:
+ *           type: string
+ *       - in: query
+ *         name: date
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: date
+ *     responses:
+ *       200:
+ *         description: List of available slots
+ *       404:
+ *         description: Doctor not found
+ */
 router.get('/:doctorId/slots', [
   query('date').isISO8601()
 ], asyncHandler(async (req, res) => {
@@ -302,7 +397,7 @@ router.get('/:doctorId/slots', [
       const hours = Math.floor(minutes / 60);
       const mins = minutes % 60;
       const timeSlot = `${hours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}`;
-      
+
       slots.push({
         time: timeSlot,
         available: !bookedSlots.has(timeSlot)
@@ -323,4 +418,3 @@ router.get('/:doctorId/slots', [
 }));
 
 module.exports = router;
-

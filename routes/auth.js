@@ -8,8 +8,38 @@ const { logUserAction } = require('../services/logger');
 const router = express.Router();
 
 /**
- * Patient Sign Up
- * POST /v1/auth/patient/signup
+ * @swagger
+ * /auth/patient/signup:
+ *   post:
+ *     summary: Register a new patient
+ *     tags: [Auth]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - email
+ *               - password
+ *               - name
+ *             properties:
+ *               email:
+ *                 type: string
+ *               password:
+ *                 type: string
+ *               name:
+ *                 type: string
+ *               phone:
+ *                 type: string
+ *               dateOfBirth:
+ *                 type: string
+ *                 format: date
+ *     responses:
+ *       201:
+ *         description: Patient registered successfully
+ *       400:
+ *         description: Validation error or email already exists
  */
 router.post('/patient/signup', [
   body('email').isEmail().normalizeEmail(),
@@ -91,8 +121,30 @@ router.post('/patient/signup', [
 }));
 
 /**
- * Patient Login
- * POST /v1/auth/patient/login
+ * @swagger
+ * /auth/patient/login:
+ *   post:
+ *     summary: Login for patients
+ *     tags: [Auth]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - email
+ *               - password
+ *             properties:
+ *               email:
+ *                 type: string
+ *               password:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Login successful
+ *       401:
+ *         description: Invalid credentials
  */
 router.post('/patient/login', [
   body('email').isEmail().normalizeEmail(),
@@ -390,8 +442,42 @@ router.post('/patient/login', [
 }));
 
 /**
- * Doctor Sign Up
- * POST /v1/auth/doctor/signup
+ * @swagger
+ * /auth/doctor/signup:
+ *   post:
+ *     summary: Register a new doctor
+ *     tags: [Auth]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - email
+ *               - password
+ *               - name
+ *               - specialization
+ *             properties:
+ *               email:
+ *                 type: string
+ *               password:
+ *                 type: string
+ *               name:
+ *                 type: string
+ *               phone:
+ *                 type: string
+ *               specialization:
+ *                 type: string
+ *               yearsOfExperience:
+ *                 type: integer
+ *               bio:
+ *                 type: string
+ *     responses:
+ *       201:
+ *         description: Doctor registered successfully
+ *       400:
+ *         description: Validation error or email already exists
  */
 router.post('/doctor/signup', [
   body('email').isEmail().normalizeEmail(),
@@ -499,8 +585,30 @@ router.post('/doctor/signup', [
 }));
 
 /**
- * Doctor Login
- * POST /v1/auth/doctor/login
+ * @swagger
+ * /auth/doctor/login:
+ *   post:
+ *     summary: Login for doctors
+ *     tags: [Auth]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - email
+ *               - password
+ *             properties:
+ *               email:
+ *                 type: string
+ *               password:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Login successful
+ *       401:
+ *         description: Invalid credentials
  */
 router.post('/doctor/login', [
   body('email').isEmail().normalizeEmail(),
@@ -801,8 +909,35 @@ router.post('/doctor/login', [
 module.exports = router;
 
 /**
- * Admin Sign Up
- * POST /v1/auth/admin/signup
+ * @swagger
+ * /auth/admin/signup:
+ *   post:
+ *     summary: Register a new admin
+ *     tags: [Auth]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - email
+ *               - password
+ *               - name
+ *             properties:
+ *               email:
+ *                 type: string
+ *               password:
+ *                 type: string
+ *               name:
+ *                 type: string
+ *               phone:
+ *                 type: string
+ *     responses:
+ *       201:
+ *         description: Admin registered successfully
+ *       400:
+ *         description: Validation error or email already exists
  */
 router.post('/admin/signup', [
   body('email').isEmail().normalizeEmail(),
@@ -878,8 +1013,32 @@ router.post('/admin/signup', [
 }));
 
 /**
- * Admin Login
- * POST /v1/auth/admin/login
+ * @swagger
+ * /auth/admin/login:
+ *   post:
+ *     summary: Login for admins
+ *     tags: [Auth]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - email
+ *               - password
+ *             properties:
+ *               email:
+ *                 type: string
+ *               password:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Login successful
+ *       401:
+ *         description: Invalid credentials
+ *       403:
+ *         description: Forbidden - Not an admin
  */
 router.post('/admin/login', [
   body('email').isEmail().normalizeEmail(),
@@ -1068,4 +1227,3 @@ router.post('/admin/login', [
 }));
 
 module.exports = router;
-

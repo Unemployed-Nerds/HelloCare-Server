@@ -7,8 +7,20 @@ const { generateSummary, generateSuggestions, generateSummaryForReports } = requ
 const router = express.Router();
 
 /**
- * Get AI Summary
- * GET /v1/ai/summary
+ * @swagger
+ * /ai/summary:
+ *   get:
+ *     summary: Get AI-generated summary of user's health
+ *     tags: [AI]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Health summary retrieved successfully
+ *       401:
+ *         description: Unauthorized
+ *       500:
+ *         description: AI service error
  */
 router.get('/summary', authenticateToken, asyncHandler(async (req, res) => {
   const userId = req.user.uid;
@@ -27,8 +39,33 @@ router.get('/summary', authenticateToken, asyncHandler(async (req, res) => {
 }));
 
 /**
- * Get AI Summary for Specific Reports
- * POST /v1/ai/summary
+ * @swagger
+ * /ai/summary:
+ *   post:
+ *     summary: Generate summary for specific reports
+ *     tags: [AI]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - reportIds
+ *             properties:
+ *               reportIds:
+ *                 type: array
+ *                 items:
+ *                   type: string
+ *     responses:
+ *       200:
+ *         description: Summary generated successfully
+ *       400:
+ *         description: Invalid request data
+ *       401:
+ *         description: Unauthorized
  */
 router.post('/summary', authenticateToken, [
   body('reportIds').isArray().notEmpty().withMessage('reportIds must be a non-empty array'),
@@ -62,8 +99,27 @@ router.post('/summary', authenticateToken, [
 }));
 
 /**
- * Get AI Suggestions
- * GET /v1/ai/suggestions
+ * @swagger
+ * /ai/suggestions:
+ *   get:
+ *     summary: Get AI health suggestions
+ *     tags: [AI]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: reportId
+ *         required: false
+ *         schema:
+ *           type: string
+ *         description: Optional report ID to get suggestions specific to a report
+ *     responses:
+ *       200:
+ *         description: Suggestions retrieved successfully
+ *       401:
+ *         description: Unauthorized
+ *       500:
+ *         description: AI service error
  */
 router.get('/suggestions', authenticateToken, [
   query('reportId').optional().trim()
@@ -97,4 +153,3 @@ router.get('/suggestions', authenticateToken, [
 }));
 
 module.exports = router;
-

@@ -20,9 +20,41 @@ const { generateSummary, generateSuggestions } = require('../services/ai');
 const router = express.Router();
 
 /**
- * Voice Assistant (text-based for now)
- * POST /v1/voice/assistant
- * Body: { text: string }
+ * @swagger
+ * /voice/assistant:
+ *   post:
+ *     summary: Voice Assistant (Text-based)
+ *     description: Process natural language commands for appointments, reports, etc.
+ *     tags: [Voice]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - text
+ *             properties:
+ *               text:
+ *                 type: string
+ *                 description: User's spoken or typed text
+ *               context:
+ *                 type: array
+ *                 items:
+ *                   type: object
+ *                 description: Conversation context
+ *               lastAction:
+ *                 type: string
+ *                 description: ID of the last action performed
+ *     responses:
+ *       200:
+ *         description: Assistant response
+ *       400:
+ *         description: Validation error
+ *       500:
+ *         description: Server error
  */
 router.post(
   '/assistant',
@@ -113,24 +145,24 @@ router.post(
             error: result.success
               ? null
               : {
-                  code: 'CANCEL_FAILED',
-                  message: result.message,
-                },
+                code: 'CANCEL_FAILED',
+                message: result.message,
+              },
           });
         }
         case 'book_appointment': {
           const booking = intent.booking || {};
-          
+
           // Check what information is missing
           const missing = [];
           if (!booking.doctorName && !booking.doctorId) missing.push('doctor');
           if (!booking.date) missing.push('date');
           if (!booking.time) missing.push('time');
-          
+
           // If information is missing, ask follow-up questions
           if (missing.length > 0 || intent.needsClarification) {
             let followUp = intent.followUp;
-            
+
             if (!followUp) {
               if (missing.includes('doctor')) {
                 followUp = 'Which doctor would you like to book with?';
@@ -142,7 +174,7 @@ router.post(
                 followUp = 'I need more information to book your appointment.';
               }
             }
-            
+
             // Generate humanized follow-up
             const humanizedFollowUp = await generateHumanizedResponse(
               text,
@@ -150,7 +182,7 @@ router.post(
               intent.action,
               context
             );
-            
+
             return res.json({
               success: true,
               data: {
@@ -161,7 +193,7 @@ router.post(
               },
             });
           }
-          
+
           // Search for doctor if only name is provided
           let doctorId = booking.doctorId;
           if (!doctorId && booking.doctorName) {
@@ -204,7 +236,7 @@ router.post(
               doctorId = doctors[0].doctorId;
             }
           }
-          
+
           // Check available slots if date is provided but time is not
           if (doctorId && booking.date && !booking.time) {
             const availableSlots = await getAvailableSlots(doctorId, booking.date);
@@ -240,7 +272,7 @@ router.post(
               },
             });
           }
-          
+
           // Book the appointment
           const result = await bookAppointment(userId, {
             doctorId,
@@ -249,14 +281,14 @@ router.post(
             duration: booking.duration || 30,
             notes: booking.notes,
           });
-          
+
           const humanizedResponse = await generateHumanizedResponse(
             text,
             result,
             intent.action,
             context
           );
-          
+
           return res.json({
             success: result.success,
             data: {
@@ -267,20 +299,20 @@ router.post(
             error: result.success
               ? null
               : {
-                  code: 'BOOKING_FAILED',
-                  message: result.message,
-                },
+                code: 'BOOKING_FAILED',
+                message: result.message,
+              },
           });
         }
         case 'navigate': {
           const navigation = intent.navigation || {};
           let route = navigation.route;
-          
+
           // If route not provided, try to infer from text
           if (!route) {
             route = getNavigationRoute(text);
           }
-          
+
           if (!route) {
             return res.json({
               success: false,
@@ -290,7 +322,7 @@ router.post(
               },
             });
           }
-          
+
           return res.json({
             success: true,
             data: {
@@ -352,7 +384,7 @@ router.post(
           try {
             const suggestions = await generateSuggestions(userId, null);
             const suggestionsList = Array.isArray(suggestions) ? suggestions : (suggestions.suggestions || []);
-            
+
             if (suggestionsList.length === 0) {
               const humanizedResponse = await generateHumanizedResponse(
                 text,
@@ -369,14 +401,14 @@ router.post(
                 },
               });
             }
-            
+
             const humanizedResponse = await generateHumanizedResponse(
               text,
               suggestionsList,
               intent.action,
               context
             );
-            
+
             return res.json({
               success: true,
               data: {
@@ -424,5 +456,3 @@ router.post(
 );
 
 module.exports = router;
-
-

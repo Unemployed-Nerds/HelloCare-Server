@@ -42,6 +42,40 @@ const requireAdmin = async (req, res, next) => {
  * GET /v1/admin/logs
  * Retrieves paginated audit logs for admin activities
  */
+/**
+ * @swagger
+ * /admin/logs:
+ *   get:
+ *     summary: Get Admin Logs
+ *     description: Retrieves paginated audit logs for admin activities
+ *     tags: [Admin]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           minimum: 1
+ *           maximum: 100
+ *           default: 50
+ *       - in: query
+ *         name: offset
+ *         schema:
+ *           type: integer
+ *           minimum: 0
+ *           default: 0
+ *       - in: query
+ *         name: role
+ *         schema:
+ *           type: string
+ *           enum: [patient, doctor, admin]
+ *     responses:
+ *       200:
+ *         description: List of logs
+ *       403:
+ *         description: Access denied
+ */
 router.get('/logs', authenticateToken, requireAdmin, [
     query('limit').optional().isInt({ min: 1, max: 100 }),
     query('offset').optional().isInt({ min: 0 }),
@@ -89,6 +123,34 @@ router.get('/logs', authenticateToken, requireAdmin, [
  * Get All Patients
  * GET /v1/admin/patients
  */
+/**
+ * @swagger
+ * /admin/patients:
+ *   get:
+ *     summary: Get All Patients
+ *     tags: [Admin]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           minimum: 1
+ *           maximum: 100
+ *           default: 50
+ *       - in: query
+ *         name: offset
+ *         schema:
+ *           type: integer
+ *           minimum: 0
+ *           default: 0
+ *     responses:
+ *       200:
+ *         description: List of patients
+ *       403:
+ *         description: Access denied
+ */
 router.get('/patients', authenticateToken, requireAdmin, [
     query('limit').optional().isInt({ min: 1, max: 100 }),
     query('offset').optional().isInt({ min: 0 })
@@ -123,6 +185,47 @@ router.get('/patients', authenticateToken, requireAdmin, [
 /**
  * Get All Appointments
  * GET /v1/admin/appointments
+ */
+/**
+ * @swagger
+ * /admin/appointments:
+ *   get:
+ *     summary: Get All Appointments
+ *     tags: [Admin]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           minimum: 1
+ *           maximum: 100
+ *           default: 50
+ *       - in: query
+ *         name: offset
+ *         schema:
+ *           type: integer
+ *           minimum: 0
+ *           default: 0
+ *       - in: query
+ *         name: status
+ *         schema:
+ *           type: string
+ *           enum: [pending, confirmed, completed, cancelled]
+ *       - in: query
+ *         name: patientId
+ *         schema:
+ *           type: string
+ *       - in: query
+ *         name: doctorId
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: List of appointments
+ *       403:
+ *         description: Access denied
  */
 router.get('/appointments', authenticateToken, requireAdmin, [
     query('limit').optional().isInt({ min: 1, max: 100 }),
@@ -174,6 +277,20 @@ router.get('/appointments', authenticateToken, requireAdmin, [
  * Get System Stats
  * GET /v1/admin/stats
  */
+/**
+ * @swagger
+ * /admin/stats:
+ *   get:
+ *     summary: Get System Stats
+ *     tags: [Admin]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: System statistics
+ *       403:
+ *         description: Access denied
+ */
 router.get('/stats', authenticateToken, requireAdmin, asyncHandler(async (req, res) => {
     try {
         // Count doctors
@@ -221,6 +338,40 @@ router.get('/stats', authenticateToken, requireAdmin, asyncHandler(async (req, r
 /**
  * Update Appointment Status
  * PUT /v1/admin/appointments/:id/status
+ */
+/**
+ * @swagger
+ * /admin/appointments/{id}/status:
+ *   put:
+ *     summary: Update Appointment Status
+ *     tags: [Admin]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - status
+ *             properties:
+ *               status:
+ *                 type: string
+ *                 enum: [pending, confirmed, completed, cancelled]
+ *     responses:
+ *       200:
+ *         description: Status updated
+ *       403:
+ *         description: Access denied
+ *       404:
+ *         description: Appointment not found
  */
 router.put('/appointments/:id/status', authenticateToken, requireAdmin, [
     body('status').isIn(['pending', 'confirmed', 'completed', 'cancelled'])
